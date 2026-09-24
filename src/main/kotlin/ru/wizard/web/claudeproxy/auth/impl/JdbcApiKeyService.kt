@@ -11,8 +11,6 @@ import ru.wizard.web.claudeproxy.auth.ApiKeyService
 import ru.wizard.web.claudeproxy.auth.ApiKeyService.AuthorizedKey
 import ru.wizard.web.claudeproxy.config.ProxyProperties
 import ru.wizard.web.claudeproxy.db.DatabaseProvider
-import java.nio.charset.StandardCharsets.UTF_8
-import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
 
 /**
@@ -36,7 +34,7 @@ class JdbcApiKeyService(
                 logger.warn { "Пропущен сид-ключ с пустым name/key" }
                 continue
             }
-            val keyHash = sha256Hex(seedKey.key)
+            val keyHash = ApiKeyService.sha256Hex(seedKey.key)
             val existingHashes = jdbcTemplate.query(
                 "SELECT key_hash FROM api_key WHERE name = ?",
                 { resultSet, _ -> resultSet.getString(1) },
@@ -69,7 +67,7 @@ class JdbcApiKeyService(
                 { resultSet, _ ->
                     AuthorizedKey(resultSet.getLong("id"), resultSet.getString("name"))
                 },
-                sha256Hex(presentedKey),
+                ApiKeyService.sha256Hex(presentedKey),
             ).firstOrNull()
         }?.also { touch(it.id) }
 
@@ -95,9 +93,5 @@ class JdbcApiKeyService(
     private companion object {
         private const val KEY_PREFIX_LENGTH = 10
         private const val LAST_USED_TOUCH_INTERVAL_MILLISECONDS = 60_000L
-
-        fun sha256Hex(value: String): String =
-            MessageDigest.getInstance("SHA-256").digest(value.toByteArray(UTF_8))
-                .joinToString("") { "%02x".format(it) }
     }
 }

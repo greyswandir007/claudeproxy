@@ -50,6 +50,7 @@ class ProxyIntegrationTest {
             .build()
         jdbcTemplate.update("DELETE FROM usage_event")
         jdbcTemplate.update("DELETE FROM usage_window")
+        jdbcTemplate.update("DELETE FROM api_key WHERE name <> 'test'")
     }
 
     @Test
@@ -227,6 +228,101 @@ class ProxyIntegrationTest {
             .jsonPath("$.type").isEqualTo("error")
             .jsonPath("$.error.type").isEqualTo("rate_limit_error")
             .jsonPath("$.error.message").isEqualTo("rate limited")
+    }
+
+    @Test
+    fun `жизненный цикл ключа через api`() {
+        val keyName = "generated-${UUID.randomUUID()}"
+        val createResponse = webTestClient.post().uri("/api/keys")
+            .contentType(MediaType.APPLICATION_JSON)
+            .bodyValue("""{"name":"$keyName"}""")
+            .exchange().expectStatus().isCreated
+            .expectBody(String::class.java).returnResult().responseBody!!
+        val createdNode = objectMapper.readTree(createResponse)
+        val fullKey = createdNode.path("fullKey").asText()
+        val keyId = createdNode.path("clientKey").path("id").asLong()
+        assertTrue(fullKey.startsWith("cpk_"))
+        assertEquals(47, fullKey.length) // cpk_ + 43 символа base64url
+
+        // сгенерированный ключ проходит auth
+        webTestClient.get().uri("/v1/models")
+            .header("x-api-key", fullKey)
+            .exchange().expectStatus().isOk
+
+        // дубликат имени — 409
+        webTestClient.post().uri("/api/keys")
+            .contentType(MediaType.APPLICATION_JSON)
+            .bodyValue("""{"name":"$keyName"}""")
+            .exchange().expectStatus().isEqualTo(409)
+
+        // список содержит оба ключа
+        webTestClient.get().uri("/api/keys")
+            .exchange().expectStatus().isOk
+            .expectBody()
+            .jsonPath("$[?(@.name == '$keyName')].keyPrefix").isNotEmpty
+            .jsonPath("$[?(@.name == 'test')]").isNotEmpty
+
+        // отзыв → ключ перестаёт работать
+        webTestClient.post().uri("/api/keys/$keyId/revoke")
+            .exchange().expectStatus().isOk
+            .expectBody().jsonPath("$.revoked").isEqualTo(true)
+        webTestClient.get().uri("/v1/models")
+            .header("x-api-key", fullKey)
+            .exchange().expectStatus().isUnauthorized
+    }
+
+    @Test
+    fun `статистика summary, by-model, окна и timeline`() {
+        // генерируем usage-событие
+        webTestClient.post().uri("/v1/messages")
+            .header("x-api-key", SEED_API_KEY)
+            .contentType(MediaType.APPLICATION_JSON)
+            .bodyValue(
+                """{"model":"fake-model","max_tokens":100,"messages":[{"role":"user","content":"привет"}]}""",
+            )
+            .exchange().expectStatus().isOk
+        awaitUsageEventRow("stream = 0")
+
+        webTestClient.get().uri("/api/summary?range=7d&key=test")
+            .exchange().expectStatus().isOk
+            .expectBody()
+            .jsonPath("$.totals.requests").isEqualTo(1)
+            .jsonPath("$.totals.inputTokens").isEqualTo(10)
+            .jsonPath("$.totals.outputTokens").isEqualTo(20)
+
+        // текущее окно по диапазону window
+        webTestClient.get().uri("/api/summary?range=window&key=test")
+            .exchange().expectStatus().isOk
+            .expectBody()
+            .jsonPath("$.window.startedAtMilliseconds").isNumber
+            .jsonPath("$.totals.inputTokens").isEqualTo(10)
+
+        webTestClient.get().uri("/api/by-model?range=7d")
+            .exchange().expectStatus().isOk
+            .expectBody()
+            .jsonPath("$[0].label").isEqualTo("fake-model")
+            .jsonPath("$[0].requests").isEqualTo(1)
+
+        webTestClient.get().uri("/api/window?key=test")
+            .exchange().expectStatus().isOk
+            .expectBody()
+            .jsonPath("$.startedAtMilliseconds").isNumber
+
+        webTestClient.get().uri("/api/windows?key=test&limit=5")
+            .exchange().expectStatus().isOk
+            .expectBody()
+            .jsonPath("$[0].totals.inputTokens").isEqualTo(10)
+
+        webTestClient.get().uri("/api/timeline?bucket=hour")
+            .exchange().expectStatus().isOk
+            .expectBody()
+            .jsonPath("$[0].requests").isEqualTo(1)
+
+        webTestClient.get().uri("/api/config")
+            .exchange().expectStatus().isOk
+            .expectBody()
+            .jsonPath("$.providers[1].name").isEqualTo("openai-fake")
+            .jsonPath("$.exposedModels[0]").isEqualTo("fake-model")
     }
 
     private fun asLong(value: Any?): Long = (value as Number).toLong()

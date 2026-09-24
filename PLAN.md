@@ -2,10 +2,12 @@
 
 Статус: план согласован 2026-09-24; стек обновлён по решению от там же — реактивный.
 Backend — Kotlin + Spring **WebFlux** (корутины + Flow), frontend — React + TypeScript,
-БД — SQLite. **M1 и M2 реализованы** (2026-09-24): конфигурация, реестр моделей,
+БД — SQLite. **M1–M3 реализованы** (2026-09-24): конфигурация, реестр моделей,
 auth по ключам из БД, `/v1/models`, pass-through Anthropic и полный перевод
 Claude ↔ OpenAI (запрос/ответ/SSE, tools, thinking→reasoning_effort, count_tokens),
-usage + окна; интеграционные тесты с фейковыми anthropic/openai upstream зелёные.
+usage + окна, Stats API `/api` (summary/by-model/by-provider/by-key/window/windows/
+timeline/config) и управление ключами `/api/keys`; интеграционные тесты с фейковыми
+anthropic/openai upstream зелёные.
 
 ## 1. Что строим
 
@@ -414,7 +416,7 @@ claudeproxy/
 | **M0** (этот шаг) | PLAN.md, README.md, .gitignore, пример конфига, git init | файлы готовы |
 | **M1** ✅ | Зависимости WebFlux/корутин (уже в build), конфигурация + реестр моделей, auth-фильтр (WebFilter), `/v1/models`, pass-through anthropic (stream и не-stream), SQLite + запись usage + окна | Claude Code через прокси работает с anthropic-провайдером, в БД падают события |
 | **M2** ✅ | OpenAI-перевод: не-stream, затем stream + tools + reasoning, count_tokens | Claude Code полноценно работает с OpenAI-провайдером (инструменты, стриминг) |
-| **M3** | Stats API (`/api/**`) со всеми агрегатами; управление ключами (`/api/keys`): генерация, список, отзыв, сид из YAML | curl'ом получаем summary/by-model/timeline/windows; сгенерированный ключ проходит auth |
+| **M3** ✅ | Stats API (`/api`) со всеми агрегатами; управление ключами (`/api/keys`): генерация, список, отзыв, сид из YAML | curl'ом получаем summary/by-model/timeline/windows; сгенерированный ключ проходит auth |
 | **M4** | Фронтенд-дашборд + экран «Ключи» | Экран показывает окна/таблицы/график, автообновление; ключ генерируется из UI и работает |
 | **M5** | Полировка: сборка `web/dist` в jar, логирование (kotlin-logging), Basic Auth дашборда для production, retention, обработка обрывов, README-финал | Одна команда запуска, всё работает end-to-end; дашборд за Basic Auth |
 
