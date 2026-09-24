@@ -324,6 +324,19 @@ class ProxyIntegrationTest {
             .expectBody()
             .jsonPath("$[0].requests").isEqualTo(1)
 
+        // таймлайн фильтруется по ключу: другой ключ — пусто
+        val createdKey = webTestClient.post().uri("/api/keys")
+            .contentType(MediaType.APPLICATION_JSON)
+            .bodyValue("""{"name":"timeline-other-key"}""")
+            .exchange().expectStatus().isCreated
+            .expectBody(String::class.java).returnResult().responseBody!!
+        val otherKeyName = objectMapper.readTree(createdKey).path("clientKey").path("name").asText()
+        webTestClient.get().uri("/api/timeline?bucket=hour&key=$otherKeyName")
+            .exchange().expectStatus().isOk
+            .expectBody()
+            .jsonPath("$").isArray()
+            .jsonPath("$.length()").isEqualTo(0)
+
         webTestClient.get().uri("/api/config")
             .exchange().expectStatus().isOk
             .expectBody()

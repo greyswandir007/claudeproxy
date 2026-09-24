@@ -14,6 +14,9 @@ import UsageTable from '../components/UsageTable'
 import WindowCard from '../components/WindowCard'
 import WindowHistoryTable from '../components/WindowHistoryTable'
 
+/** Сентинел «Все ключи» в селекторе (пустая строка). */
+const ALL_KEYS_VALUE = ''
+
 // Главный экран: окно 5ч, периоды, таймлайн, таблицы, история окон.
 export default function DashboardPage({ refreshTick }: { refreshTick: number }) {
   const [clientKeys, setClientKeys] = useState<ClientKey[]>([])
@@ -34,7 +37,16 @@ export default function DashboardPage({ refreshTick }: { refreshTick: number }) 
       .then((keys) => {
         const activeKeys = keys.filter((key) => key.revokedAt === null)
         setClientKeys(activeKeys)
-        setSelectedKey((current) => current ?? activeKeys[0]?.name ?? null)
+        // по умолчанию — самый активный ключ (не свежесозданный без трафика);
+        // уже сделанный пользователем выбор не перекрываем
+        setSelectedKey((current) => {
+          if (current !== null) return current
+          const mostActive = [...activeKeys].sort(
+            (first, second) =>
+              (second.lastUsedAt ?? second.createdAt) - (first.lastUsedAt ?? first.createdAt),
+          )[0]
+          return mostActive?.name ?? ALL_KEYS_VALUE
+        })
       })
       .catch((loadError: Error) => setError(loadError.message))
     api
@@ -44,18 +56,25 @@ export default function DashboardPage({ refreshTick }: { refreshTick: number }) 
   }, [refreshTick])
 
   useEffect(() => {
-    if (!selectedKey) return
-    Promise.all([
-      api.currentWindow(selectedKey),
-      api.summary('today', selectedKey),
-      api.summary('7d', selectedKey),
-      api.summary('30d', selectedKey),
-      api.byModel('7d', selectedKey),
-      api.byProvider('7d', selectedKey),
-      api.windowHistory(selectedKey),
+    if (selectedKey === null) return // ключи ещё не загрузились
+    const keyParameter = selectedKey.length > 0 ? selectedKey : null
+    const summariesRequest = Promise.all([
+      api.summary('today', keyParameter),
+      api.summary('7d', keyParameter),
+      api.summary('30d', keyParameter),
+      api.byModel('7d', keyParameter),
+      api.byProvider('7d', keyParameter),
     ])
+    // окно — атрибут конкретного ключа; для «Все ключи» не показываем
+    const windowsRequest: Promise<[WindowSummary | null, WindowSummary[]]> = keyParameter
+      ? Promise.all([api.currentWindow(keyParameter), api.windowHistory(keyParameter)])
+      : Promise.resolve([null, []])
+    Promise.all([summariesRequest, windowsRequest])
       .then(
-        ([currentWindow, todaySummary, weekSummary, monthSummary, models, providers, windowHistory]) => {
+        ([
+          [todaySummary, weekSummary, monthSummary, models, providers],
+          [currentWindow, windowHistory],
+        ]) => {
           setClientWindow(currentWindow)
           setSummaries([todaySummary, weekSummary, monthSummary])
           setByModelRows(models)
@@ -68,13 +87,15 @@ export default function DashboardPage({ refreshTick }: { refreshTick: number }) 
   }, [refreshTick, selectedKey])
 
   useEffect(() => {
+    if (selectedKey === null) return // ключи ещё не загрузились
     api
-      .timeline(timelineBucket)
+      .timeline(timelineBucket, selectedKey.length > 0 ? selectedKey : null)
       .then(setTimelinePoints)
       .catch((loadError: Error) => setError(loadError.message))
-  }, [refreshTick, timelineBucket])
+  }, [refreshTick, timelineBucket, selectedKey])
 
   const windowHours = useMemo(() => proxyConfig?.windowHours ?? 5, [proxyConfig])
+  const keyParameter = selectedKey !== null && selectedKey.length > 0 ? selectedKey : null
 
   return (
     <div className="dashboard">
@@ -83,20 +104,30 @@ export default function DashboardPage({ refreshTick }: { refreshTick: number }) 
         <label>
           Клиентский ключ:{' '}
           <select
-            value={selectedKey ?? ''}
+            value={selectedKey ?? ALL_KEYS_VALUE}
             onChange={(event) => setSelectedKey(event.target.value)}
           >
+            <option value={ALL_KEYS_VALUE}>Все ключи (сводно)</option>
             {clientKeys.map((key) => (
               <option key={key.id} value={key.name}>
                 {key.name}
+                {key.lastUsedAt ? '' : ' (без обращений)'}
               </option>
             ))}
-            {clientKeys.length === 0 && <option value="">нет активных ключей</option>}
           </select>
         </label>
       </div>
       <div className="cards-row">
-        <WindowCard clientWindow={clientWindow} windowHours={windowHours} />
+        {keyParameter ? (
+          <WindowCard clientWindow={clientWindow} windowHours={windowHours} />
+        ) : (
+          <section className="card window-card">
+            <h2>Текущее окно {windowHours} ч</h2>
+            <p className="muted">
+              Окно считается на каждый ключ отдельно — выберите ключ, чтобы увидеть его окно.
+            </p>
+          </section>
+        )}
         {summaries.map((summary) => (
           <PeriodCard key={summary.range} summary={summary} />
         ))}
@@ -122,7 +153,7 @@ export default function DashboardPage({ refreshTick }: { refreshTick: number }) 
         <UsageTable title="По моделям (7 дней)" rows={byModelRows} labelTitle="Модель" />
         <UsageTable title="По провайдерам (7 дней)" rows={byProviderRows} labelTitle="Провайдер" />
       </div>
-      {selectedKey && <WindowHistoryTable windows={windows} />}
+      {keyParameter && <WindowHistoryTable windows={windows} />}
     </div>
   )
 }

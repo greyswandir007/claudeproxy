@@ -162,7 +162,10 @@ export const api = {
     getJson<WindowSummary | null>(`/api/window?key=${encodeURIComponent(key)}`),
   windowHistory: (key: string, limit = 20) =>
     getJson<WindowSummary[]>(`/api/windows?key=${encodeURIComponent(key)}&limit=${limit}`),
-  timeline: (bucket: 'hour' | 'day') => getJson<TimelinePoint[]>(`/api/timeline?bucket=${bucket}`),
+  timeline: (bucket: 'hour' | 'day', key: string | null) =>
+    getJson<TimelinePoint[]>(
+      `/api/timeline?bucket=${bucket}${key ? `&key=${encodeURIComponent(key)}` : ''}`,
+    ),
   config: () => getJson<ProxyConfig>('/api/config'),
   keys: () => getJson<ClientKey[]>('/api/keys'),
   createKey: (name: string) => postJson<CreatedKey>('/api/keys', { name }),
