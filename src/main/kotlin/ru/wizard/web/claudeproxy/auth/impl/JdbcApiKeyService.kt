@@ -1,0 +1,103 @@
+package ru.wizard.web.claudeproxy.auth.impl
+
+import io.github.oshai.kotlinlogging.KotlinLogging
+import jakarta.annotation.PostConstruct
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
+import org.springframework.jdbc.core.JdbcTemplate
+import org.springframework.stereotype.Service
+import ru.wizard.web.claudeproxy.auth.ApiKeyService
+import ru.wizard.web.claudeproxy.auth.ApiKeyService.AuthorizedKey
+import ru.wizard.web.claudeproxy.config.ProxyProperties
+import ru.wizard.web.claudeproxy.db.DatabaseProvider
+import java.nio.charset.StandardCharsets.UTF_8
+import java.security.MessageDigest
+import java.util.concurrent.ConcurrentHashMap
+
+/**
+ * Реализация ApiKeyService на JdbcTemplate (SQLite через DatabaseProvider).
+ */
+@Service
+class JdbcApiKeyService(
+    private val databaseProvider: DatabaseProvider,
+    private val jdbcTemplate: JdbcTemplate,
+    private val proxyProperties: ProxyProperties,
+) : ApiKeyService {
+    private val logger = KotlinLogging.logger {}
+
+    private val lastTouchTimestamps = ConcurrentHashMap<Long, Long>()
+    private val touchScope = CoroutineScope(SupervisorJob())
+
+    @PostConstruct
+    override fun seed() {
+        for (seedKey in proxyProperties.apiKeys) {
+            if (seedKey.name.isBlank() || seedKey.key.isBlank()) {
+                logger.warn { "Пропущен сид-ключ с пустым name/key" }
+                continue
+            }
+            val keyHash = sha256Hex(seedKey.key)
+            val existingHashes = jdbcTemplate.query(
+                "SELECT key_hash FROM api_key WHERE name = ?",
+                { resultSet, _ -> resultSet.getString(1) },
+                seedKey.name,
+            )
+            when {
+                existingHashes.isEmpty() -> {
+                    jdbcTemplate.update(
+                        "INSERT INTO api_key (name, key_hash, key_prefix, created_at) VALUES (?,?,?,?)",
+                        seedKey.name,
+                        keyHash,
+                        seedKey.key.take(KEY_PREFIX_LENGTH),
+                        System.currentTimeMillis(),
+                    )
+                    logger.info { "Засеян клиентский ключ '${seedKey.name}'" }
+                }
+
+                existingHashes.first() != keyHash ->
+                    logger.warn {
+                        "Сид-ключ '${seedKey.name}' отличается от ключа в БД — оставлен ключ из БД"
+                    }
+            }
+        }
+    }
+
+    override suspend fun authenticate(presentedKey: String): AuthorizedKey? =
+        databaseProvider.execute {
+            jdbcTemplate.query(
+                "SELECT id, name FROM api_key WHERE key_hash = ? AND revoked_at IS NULL",
+                { resultSet, _ ->
+                    AuthorizedKey(resultSet.getLong("id"), resultSet.getString("name"))
+                },
+                sha256Hex(presentedKey),
+            ).firstOrNull()
+        }?.also { touch(it.id) }
+
+    /** last_used_at обновляем не чаще раза в минуту на ключ (троттлинг записей в БД). */
+    private fun touch(id: Long) {
+        val now = System.currentTimeMillis()
+        val previousTouchTimestamp = lastTouchTimestamps.put(id, now) ?: 0L
+        if (now - previousTouchTimestamp >= LAST_USED_TOUCH_INTERVAL_MILLISECONDS) {
+            touchScope.launch {
+                runCatching {
+                    databaseProvider.execute {
+                        jdbcTemplate.update(
+                            "UPDATE api_key SET last_used_at = ? WHERE id = ?",
+                            now,
+                            id,
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    private companion object {
+        private const val KEY_PREFIX_LENGTH = 10
+        private const val LAST_USED_TOUCH_INTERVAL_MILLISECONDS = 60_000L
+
+        fun sha256Hex(value: String): String =
+            MessageDigest.getInstance("SHA-256").digest(value.toByteArray(UTF_8))
+                .joinToString("") { "%02x".format(it) }
+    }
+}

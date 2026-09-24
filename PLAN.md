@@ -2,7 +2,9 @@
 
 Статус: план согласован 2026-09-24; стек обновлён по решению от там же — реактивный.
 Backend — Kotlin + Spring **WebFlux** (корутины + Flow), frontend — React + TypeScript,
-БД — SQLite.
+БД — SQLite. **M1 реализован** (2026-09-24): конфигурация, реестр моделей, auth по
+ключам из БД, `/v1/models`, pass-through Anthropic (stream/не-stream), usage + окна;
+интеграционные тесты с фейковым upstream зелёные.
 
 ## 1. Что строим
 
@@ -36,7 +38,7 @@ Backend — Kotlin + Spring **WebFlux** (корутины + Flow), frontend — 
 | Вопрос | Решение |
 | --- | --- |
 | Фреймворк | Spring Boot 4.1 **WebFlux** (Netty) + Kotlin 2.3 — реактивный сервер; вся логика на **корутинах и Flow** (`kotlinx-coroutines-reactor`), блокирующих вызовов в request-пути нет |
-| Доступ к БД | SQLite + `spring-boot-starter-jdbc` + `JdbcTemplate`, все вызовы — в `withContext(dbDispatcher)` (выделенный диспетчер с параллелизмом 1: SQLite — один писатель, а R2DBC-драйвера production-качества для него нет). Схема — `schema.sql` (`CREATE TABLE IF NOT EXISTS`). При миграции на PostgreSQL — переход на R2DBC без смены стиля |
+| Доступ к БД | Абстракция `DatabaseProvider` (интерфейс) + `SqliteDatabaseProvider`: SQLite + `spring-boot-starter-jdbc` + `JdbcTemplate`, все вызовы — через `execute { }` на диспетчере с параллелизмом 1 (SQLite — один писатель, R2DBC-драйвера production-качества для него нет). Схема — `schema.sql` (`CREATE TABLE IF NOT EXISTS`). При миграции на PostgreSQL — новая реализация интерфейса без смены вызывающего кода |
 | БД | SQLite (xerial `sqlite-jdbc`), файл `data/claudeproxy.db`, все времена — epoch millis UTC |
 | HTTP-клиент вверх | Spring **WebClient** (Reactor Netty): тело ответа — `Flow<DataBuffer>` / `Flow<String>` (SSE-строки) с полноценным backpressure; в коде — корутинные обёртки |
 | JSON | Jackson + `jackson-module-kotlin` (в starter-webflux); перевод через JsonNode/деревья, без строгих DTO для чужих полей |
@@ -371,21 +373,28 @@ claudeproxy/
 │   ├── ClaudeproxyApplication.kt
 │   ├── config/ProxyProperties.kt      # @ConfigurationProperties("claudeproxy")
 │   ├── auth/ApiKeyAuthFilter.kt        # WebFilter: x-api-key/Bearer → хэш → api_key
+│   ├── auth/ApiKeyService.kt           # интерфейс: сид, аутентификация ключей
+│   ├── auth/impl/JdbcApiKeyService.kt  # реализация на JdbcTemplate
 │   ├── auth/BasicAuthWebFilter.kt      # Basic Auth дашборда и /api (production)
-│   ├── routing/ModelRegistry.kt
-│   ├── http/UpstreamClient.kt         # WebClient + корутинные обёртки (Flow)
+│   ├── routing/ModelRegistry.kt        # интерфейс реестра моделей
+│   ├── routing/impl/StaticModelRegistry.kt  # строится из конфига при старте
+│   ├── db/DatabaseProvider.kt          # интерфейс доступа к БД (абстракция от СУБД)
+│   ├── db/impl/SqliteDatabaseProvider.kt     # SQLite: последовательный диспетчер
+│   ├── http/UpstreamWebClientConfiguration.kt  # общий WebClient провайдеров
 │   ├── proxy/
-│   │   ├── MessagesController.kt      # POST /v1/messages
-│   │   ├── CountTokensController.kt   # POST /v1/messages/count_tokens
+│   │   ├── MessagesController.kt      # POST /v1/messages + /v1/messages/count_tokens
 │   │   ├── ModelsController.kt        # GET /v1/models
-│   │   ├── AnthropicHandler.kt        # pass-through + перехват usage
-│   │   ├── openai/RequestTranslator.kt
-│   │   ├── openai/ResponseTranslator.kt
-│   │   ├── openai/SseTranslator.kt    # SSE state machine
-│   │   └── AnthropicErrors.kt
+│   │   ├── ApiError.kt, UpstreamError.kt, AnthropicErrors.kt
+│   │   ├── UsageAccumulator.kt, SseUsageSniffer.kt
+│   │   ├── AnthropicHandler.kt        # интерфейс pass-through + перехват usage
+│   │   ├── impl/WebClientAnthropicHandler.kt  # реализация на WebClient
+│   │   ├── openai/OpenAiHandler.kt    # интерфейс перевода протокола (M2)
+│   │   └── openai/impl/               # трансляторы запроса/ответа/SSE (M2)
 │   ├── usage/
-│   │   ├── UsageRecorder.kt           # запись события + поддержка окна
-│   │   ├── WindowService.kt
+│   │   ├── UsageRecorder.kt           # интерфейс: запись события
+│   │   ├── WindowService.kt           # интерфейс: 5-часовые окна
+│   │   ├── impl/AsyncUsageRecorder.kt # fire-and-forget корутина
+│   │   ├── impl/JdbcWindowService.kt
 │   │   └── StatsService.kt            # SQL-агрегаты для /api
 │   ├── api/StatsController.kt         # /api/**: агрегаты статистики
 │   └── api/KeyController.kt           # /api/keys: генерация/список/отзыв
@@ -402,7 +411,7 @@ claudeproxy/
 | Этап | Содержание | Критерий готовности |
 | --- | --- | --- |
 | **M0** (этот шаг) | PLAN.md, README.md, .gitignore, пример конфига, git init | файлы готовы |
-| **M1** | Зависимости WebFlux/корутин (уже в build), конфигурация + реестр моделей, auth-фильтр (WebFilter), `/v1/models`, pass-through anthropic (stream и не-stream), SQLite + запись usage + окна | Claude Code через прокси работает с anthropic-провайдером, в БД падают события |
+| **M1** ✅ | Зависимости WebFlux/корутин (уже в build), конфигурация + реестр моделей, auth-фильтр (WebFilter), `/v1/models`, pass-through anthropic (stream и не-stream), SQLite + запись usage + окна | Claude Code через прокси работает с anthropic-провайдером, в БД падают события |
 | **M2** | OpenAI-перевод: не-stream, затем stream + tools + reasoning, count_tokens | Claude Code полноценно работает с OpenAI-провайдером (инструменты, стриминг) |
 | **M3** | Stats API (`/api/**`) со всеми агрегатами; управление ключами (`/api/keys`): генерация, список, отзыв, сид из YAML | curl'ом получаем summary/by-model/timeline/windows; сгенерированный ключ проходит auth |
 | **M4** | Фронтенд-дашборд + экран «Ключи» | Экран показывает окна/таблицы/график, автообновление; ключ генерируется из UI и работает |
