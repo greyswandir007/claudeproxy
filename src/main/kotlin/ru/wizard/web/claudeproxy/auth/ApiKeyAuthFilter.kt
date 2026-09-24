@@ -11,6 +11,7 @@ import org.springframework.web.server.WebFilterChain
 import reactor.core.publisher.Mono
 import ru.wizard.web.claudeproxy.proxy.AnthropicErrors
 import ru.wizard.web.claudeproxy.proxy.ApiError
+import ru.wizard.web.claudeproxy.proxy.openai.inbound.OpenAiCompatibilityErrors
 
 /**
  * Авторизация запросов к эндпоинтам /v1: x-api-key или Authorization: Bearer →
@@ -20,14 +21,16 @@ import ru.wizard.web.claudeproxy.proxy.ApiError
 class ApiKeyAuthFilter(private val apiKeyService: ApiKeyService) : WebFilter {
 
     override fun filter(exchange: ServerWebExchange, chain: WebFilterChain): Mono<Void> {
-        if (!exchange.request.path.value().startsWith("/v1/")) {
+        val path = exchange.request.path.value()
+        if (!path.startsWith("/v1/")) {
             return chain.filter(exchange)
         }
+        // формат ошибки — по протоколу клиента: OpenAI для /v1/chat/completions
+        val openAiFormat = OpenAiCompatibilityErrors.isInboundPath(path)
         val presentedKey = extractKey(exchange.request)
-            ?: return AnthropicErrors.write(
+            ?: return writeError(
                 exchange,
-                HttpStatus.UNAUTHORIZED,
-                "authentication_error",
+                openAiFormat,
                 "Отсутствует API-ключ: передайте x-api-key или Authorization: Bearer",
             )
         return mono {
@@ -37,9 +40,30 @@ class ApiKeyAuthFilter(private val apiKeyService: ApiKeyService) : WebFilter {
             exchange.attributes[CLIENT_KEY_ATTRIBUTE] = authorizedKey.name
             chain.filter(exchange)
         }.onErrorResume(ApiError::class.java) { error ->
-            AnthropicErrors.write(exchange, error.status, error.type, error.message ?: "error")
+            writeError(exchange, openAiFormat, error.message ?: "error")
         }
     }
+
+    private fun writeError(
+        exchange: ServerWebExchange,
+        openAiFormat: Boolean,
+        message: String,
+    ): Mono<Void> =
+        if (openAiFormat) {
+            OpenAiCompatibilityErrors.write(
+                exchange,
+                HttpStatus.UNAUTHORIZED,
+                "authentication_error",
+                message,
+            )
+        } else {
+            AnthropicErrors.write(
+                exchange,
+                HttpStatus.UNAUTHORIZED,
+                "authentication_error",
+                message,
+            )
+        }
 
     companion object {
         const val CLIENT_KEY_ATTRIBUTE = "claudeproxy.clientKey"

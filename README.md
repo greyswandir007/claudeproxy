@@ -135,8 +135,34 @@ export ANTHROPIC_API_KEY=cpk_...        # ключ прокси, не прова
 claude
 ```
 
-Модели выбираются как обычно (`/model claude-opus-5`, `gpt-5.2` и любые
-другие из вашего конфига) — прокси сам маршрутизирует по провайдителям.
+Важно: в `ANTHROPIC_BASE_URL` — **корень прокси без `/v1`** (Claude Code сам
+добавляет `/v1/messages`; с `…:8080/v1` получится `/v1/v1/messages` и 404).
+Модели выбираются как обычно (`/model …`) — прокси маршрутизирует по
+провайдерам из вашего конфига. Быстрая проверка:
+
+```bash
+curl http://127.0.0.1:8080/v1/models -H "x-api-key: cpk_..."
+```
+
+## Подключение OpenAI-клиентов
+
+Прокси принимает и протокол OpenAI: любой клиент с OpenAI SDK работает со всеми
+моделями прокси через `POST /v1/chat/completions` (стриминг, tool calls;
+провайдеры обоих типов — openai и anthropic — доступны одинаково).
+
+```bash
+export OPENAI_BASE_URL=http://127.0.0.1:8080/v1
+export OPENAI_API_KEY=cpk_...           # тот же ключ прокси
+```
+
+```python
+from openai import OpenAI
+client = OpenAI(base_url="http://127.0.0.1:8080/v1", api_key="cpk_...")
+response = client.chat.completions.create(model="gpt-5.2", messages=[...])
+```
+
+`GET /v1/models` возвращает надмножество полей Anthropic и OpenAI — один
+эндпоинт корректно читают оба SDK.
 
 ## Файлы и каталоги
 

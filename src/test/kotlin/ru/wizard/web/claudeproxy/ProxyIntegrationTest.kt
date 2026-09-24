@@ -70,7 +70,10 @@ class ProxyIntegrationTest {
             .header("x-api-key", SEED_API_KEY)
             .exchange().expectStatus().isOk
             .expectBody()
+            .jsonPath("$.object").isEqualTo("list")
             .jsonPath("$.data[0].id").isEqualTo("fake-model")
+            .jsonPath("$.data[0].object").isEqualTo("model")
+            .jsonPath("$.data[0].display_name").isEqualTo("fake-model")
             .jsonPath("$.has_more").isEqualTo(false)
     }
 
@@ -591,6 +594,90 @@ class ProxyIntegrationTest {
         webTestClient.delete().uri("/api/providers/$secondaryProviderId").exchange().expectStatus().isNoContent
     }
 
+    @Test
+    fun `openai-клиент не-stream через openai-провайдера (полный roundtrip)`() {
+        val responseBody = webTestClient.post().uri("/v1/chat/completions")
+            .header("Authorization", "Bearer $SEED_API_KEY")
+            .contentType(MediaType.APPLICATION_JSON)
+            .bodyValue(OPENAI_CLIENT_REQUEST)
+            .exchange().expectStatus().isOk
+            .expectHeader().contentTypeCompatibleWith(MediaType.APPLICATION_JSON)
+            .expectBody(String::class.java).returnResult().responseBody!!
+
+        val responseNode = objectMapper.readTree(responseBody)
+        assertEquals("chat.completion", responseNode.path("object").asText())
+        assertEquals("fake-openai-model", responseNode.path("model").asText())
+        assertEquals("Сейчас 20C", responseNode.path("choices").get(0).path("message").path("content").asText())
+        assertEquals("думаю", responseNode.path("choices").get(0).path("message").path("reasoning_content").asText())
+        assertEquals(
+            "get_weather",
+            responseNode.path("choices").get(0).path("message").path("tool_calls").get(0)
+                .path("function").path("name").asText(),
+        )
+        // arguments у OpenAI — строка с JSON
+        val argumentsJson = responseNode.path("choices").get(0).path("message").path("tool_calls").get(0)
+            .path("function").path("arguments").asText()
+        assertEquals("Paris", objectMapper.readTree(argumentsJson).path("city").asText())
+        assertEquals("tool_calls", responseNode.path("choices").get(0).path("finish_reason").asText())
+        assertEquals(100L, responseNode.path("usage").path("prompt_tokens").asLong())
+        assertEquals(50L, responseNode.path("usage").path("completion_tokens").asLong())
+        assertEquals(7L, responseNode.path("usage").path("prompt_tokens_details").path("cached_tokens").asLong())
+
+        val usageEventRow = awaitUsageEventRow("model = 'fake-openai-model' AND stream = 0")
+        assertEquals(100L, asLong(usageEventRow["input_tokens"]))
+    }
+
+    @Test
+    fun `openai-клиент stream через openai-провайдера`() {
+        val responseBody = webTestClient.post().uri("/v1/chat/completions")
+            .header("Authorization", "Bearer $SEED_API_KEY")
+            .contentType(MediaType.APPLICATION_JSON)
+            .bodyValue(OPENAI_CLIENT_REQUEST.replace("\"max_tokens\":200", "\"max_tokens\":200,\"stream\":true"))
+            .exchange().expectStatus().isOk
+            .expectHeader().contentTypeCompatibleWith(MediaType.TEXT_EVENT_STREAM)
+            .expectBody(String::class.java).returnResult().responseBody!!
+
+        assertTrue(responseBody.contains("chat.completion.chunk"))
+        assertTrue(responseBody.contains("\"role\":\"assistant\""))
+        assertTrue(responseBody.contains("\"content\":\"Отв\""))
+        assertTrue(responseBody.contains("tool_calls"))
+        assertTrue(responseBody.contains("\"finish_reason\":\"tool_calls\""))
+        assertTrue(responseBody.contains("\"prompt_tokens\":100"))
+        assertTrue(responseBody.trimEnd().endsWith("data: [DONE]"))
+
+        awaitUsageEventRow("model = 'fake-openai-model' AND stream = 1")
+    }
+
+    @Test
+    fun `openai-клиент через anthropic-провайдера (обратный перевод)`() {
+        val responseBody = webTestClient.post().uri("/v1/chat/completions")
+            .header("Authorization", "Bearer $SEED_API_KEY")
+            .contentType(MediaType.APPLICATION_JSON)
+            .bodyValue("""{"model":"fake-model","max_tokens":100,"messages":[{"role":"user","content":"привет"}]}""")
+            .exchange().expectStatus().isOk
+            .expectBody(String::class.java).returnResult().responseBody!!
+
+        val responseNode = objectMapper.readTree(responseBody)
+        assertEquals("hello", responseNode.path("choices").get(0).path("message").path("content").asText())
+        assertEquals("stop", responseNode.path("choices").get(0).path("finish_reason").asText())
+        assertEquals(10L, responseNode.path("usage").path("prompt_tokens").asLong())
+        assertEquals(20L, responseNode.path("usage").path("completion_tokens").asLong())
+        awaitUsageEventRow("model = 'fake-model' AND stream = 0")
+    }
+
+    @Test
+    fun `openai-клиент ошибка в формате OpenAI`() {
+        webTestClient.post().uri("/v1/chat/completions")
+            .header("Authorization", "Bearer $SEED_API_KEY")
+            .contentType(MediaType.APPLICATION_JSON)
+            .bodyValue("""{"model":"no-such-model","messages":[]}""")
+            .exchange().expectStatus().isNotFound
+            .expectBody()
+            .jsonPath("$.error.message").isNotEmpty
+            .jsonPath("$.error.type").isEqualTo("invalid_request_error")
+            .jsonPath("$.type").doesNotExist()
+    }
+
     private fun asLong(value: Any?): Long = (value as Number).toLong()
 
     private fun awaitUsageEventRows(condition: String): List<Map<String, Any?>> = runBlocking {
@@ -822,6 +909,21 @@ class ProxyIntegrationTest {
                 "data: {\"type\":\"mess"
 
         private const val SERVER_SENT_EVENTS_SECOND_CHUNK = "age_stop\"}\n\n"
+
+        private const val OPENAI_CLIENT_REQUEST =
+            """{"model":"fake-openai-model","max_tokens":200,
+               "messages":[
+                 {"role":"system","content":"Ты помощник."},
+                 {"role":"user","content":"Погода в Париже?"},
+                 {"role":"assistant","content":"Смотрю.",
+                  "tool_calls":[{"id":"call_1","type":"function",
+                    "function":{"name":"get_weather","arguments":"{\"city\":\"Paris\"}"}}]},
+                 {"role":"tool","tool_call_id":"call_1","content":"20C"},
+                 {"role":"user","content":"Спасибо"}],
+               "tools":[{"type":"function",
+                 "function":{"name":"get_weather","description":"Погода в городе",
+                   "parameters":{"type":"object","properties":{"city":{"type":"string"}},"required":["city"]}}}],
+               "tool_choice":"required"}"""
 
         private const val CLAUDE_REQUEST_WITH_TOOLS =
             """{"model":"fake-openai-model","max_tokens":200,
