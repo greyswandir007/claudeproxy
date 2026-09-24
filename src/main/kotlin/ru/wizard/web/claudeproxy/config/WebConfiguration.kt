@@ -5,6 +5,8 @@ import org.springframework.context.annotation.Configuration
 import org.springframework.core.io.ResourceLoader
 import org.springframework.http.HttpStatus
 import org.springframework.http.MediaType
+import org.springframework.http.codec.ServerCodecConfigurer
+import org.springframework.web.reactive.config.WebFluxConfigurer
 import org.springframework.web.reactive.function.BodyInserters
 import org.springframework.web.reactive.function.server.RouterFunction
 import org.springframework.web.reactive.function.server.RouterFunctions
@@ -13,12 +15,19 @@ import reactor.core.publisher.Mono
 import java.nio.file.Path
 
 /**
- * Раздача дашборда: собранный web/dist (npm run build).
- * Явные роуты через RouterFunctions: resource-handler'ы Boot 4 (и свой, и
- * RouterFunctions.resources) ассеты не раздали, а точечные GET-роуты работают.
+ * Веб-конфигурация приложения:
+ * - лимит чтения тел запросов/ответов: свойство spring.codec.max-in-memory-size
+ *   в Boot 4 к серверным кодекам НЕ применяется (дефолт 256КБ ронял большие
+ *   сессии Claude Code ошибкой 413) — поднимаем явно через WebFluxConfigurer;
+ * - раздача дашборда: собранный web/dist (npm run build), "/" и /assets.
+ *   Resource-handler'ы Boot 4 статику не раздали — работают точечные GET-роуты.
  */
 @Configuration
-class DashboardWebConfiguration(private val resourceLoader: ResourceLoader) {
+class WebConfiguration(private val resourceLoader: ResourceLoader) : WebFluxConfigurer {
+
+    override fun configureHttpMessageCodecs(configurer: ServerCodecConfigurer) {
+        configurer.defaultCodecs().maxInMemorySize(MAX_IN_MEMORY_SIZE_BYTES)
+    }
 
     @Bean
     fun dashboardRoutes(): RouterFunction<ServerResponse> = RouterFunctions.route()
@@ -59,6 +68,9 @@ class DashboardWebConfiguration(private val resourceLoader: ResourceLoader) {
     }
 
     private companion object {
+        /** Claude Code шлёт мегабайты контекста: лимит чтения тел — 64 МБ. */
+        const val MAX_IN_MEMORY_SIZE_BYTES = 64 * 1024 * 1024
+
         /** Абсолютный file-URI обязателен: относительные file: локации не раздаются. */
         val dashboardLocations = listOf(
             "classpath:/static/",
