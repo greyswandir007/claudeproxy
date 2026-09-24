@@ -8,15 +8,17 @@ import reactor.core.publisher.Flux
 import ru.wizard.web.claudeproxy.routing.ModelRegistry
 
 /**
- * Pass-through к Anthropic-совместимому провайдеру: тело пересылается почти как есть
+ * Pass-through к Anthropic-совместимым провайдерам: тело пересылается почти как есть
  * (подмена модели и ключа), SSE проксируется чанками без буферизации,
  * usage перехватывается сниффером по ходу потока.
+ * Маршруты — по приоритету; при повторимой ошибке (429/5xx/сеть) — переключение
+ * на следующий (для стриминга — только до первого события клиенту).
  */
 interface AnthropicHandler {
 
     suspend fun passThrough(
         exchange: ServerWebExchange,
-        route: ModelRegistry.Route,
+        routes: List<ModelRegistry.Route>,
         requestRoot: JsonNode,
         upstreamPath: String,
         recordUsage: Boolean,

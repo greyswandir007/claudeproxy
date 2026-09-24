@@ -5,7 +5,6 @@ import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.databind.node.ObjectNode
 import io.github.oshai.kotlinlogging.KotlinLogging
 import org.springframework.http.HttpStatus
-import ru.wizard.web.claudeproxy.config.ProxyProperties
 import ru.wizard.web.claudeproxy.proxy.ApiError
 import ru.wizard.web.claudeproxy.routing.ModelRegistry
 
@@ -20,7 +19,7 @@ class OpenAiRequestTranslator(private val objectMapper: ObjectMapper) {
     fun translate(requestRoot: JsonNode, route: ModelRegistry.Route): ObjectNode {
         val mapping = route.mapping
         val target = objectMapper.createObjectNode()
-        target.put("model", mapping.upstream)
+        target.put("model", mapping.upstreamName)
 
         val messages = objectMapper.createArrayNode()
         translateSystemPrompt(requestRoot.path("system"))?.let { messages.add(it) }
@@ -185,7 +184,7 @@ class OpenAiRequestTranslator(private val objectMapper: ObjectMapper) {
     private fun translateLimits(
         requestRoot: JsonNode,
         target: ObjectNode,
-        mapping: ProxyProperties.ModelMapping,
+        mapping: ModelRegistry.ModelInfo,
     ) {
         val maxTokens = requestRoot.path("max_tokens").asLong(0)
         if (maxTokens > 0) {
@@ -264,7 +263,7 @@ class OpenAiRequestTranslator(private val objectMapper: ObjectMapper) {
     private fun translateThinking(
         requestRoot: JsonNode,
         target: ObjectNode,
-        mapping: ProxyProperties.ModelMapping,
+        mapping: ModelRegistry.ModelInfo,
     ) {
         if (mapping.reasoning != "map") return
         val thinking = requestRoot.path("thinking")

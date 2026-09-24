@@ -67,27 +67,30 @@ class MessagesController(
         if (model.isEmpty()) {
             throw ApiError(HttpStatus.BAD_REQUEST, "invalid_request_error", "model: Field required")
         }
-        val route = modelRegistry.find(model)
-            ?: throw ApiError(HttpStatus.NOT_FOUND, "not_found_error", "model: $model not found")
-        when {
-            route.provider.type == "anthropic" -> anthropicHandler.passThrough(
+        val routes = modelRegistry.find(model)
+        if (routes.isEmpty()) {
+            throw ApiError(HttpStatus.NOT_FOUND, "not_found_error", "model: $model not found")
+        }
+        when (routes.first().provider.type) {
+            "anthropic" -> anthropicHandler.passThrough(
                 exchange,
-                route,
+                routes,
                 requestRoot,
                 upstreamPath,
                 recordUsage,
             )
 
-            route.provider.type == "openai" && recordUsage ->
-                openAiHandler.chatCompletion(exchange, route, requestRoot, recordUsage)
-
-            route.provider.type == "openai" ->
-                openAiHandler.countTokens(exchange, route, requestRoot)
+            "openai" ->
+                if (recordUsage) {
+                    openAiHandler.chatCompletion(exchange, routes, requestRoot, recordUsage)
+                } else {
+                    openAiHandler.countTokens(exchange, routes.first(), requestRoot)
+                }
 
             else -> throw ApiError(
                 HttpStatus.NOT_IMPLEMENTED,
                 "api_error",
-                "Провайдер типа '${route.provider.type}' не поддерживается (anthropic|openai)",
+                "Провайдер типа '${routes.first().provider.type}' не поддерживается (anthropic|openai)",
             )
         }
     }

@@ -2,16 +2,14 @@ spring:
   application:
     name: claudeproxy
 
-  # SQLite: файловая БД статистики, схема применяется идемпотентно (CREATE TABLE IF NOT EXISTS)
+  # SQLite: файловая БД статистики; схема и миграции — db/migration/V*.sql
+  # (DatabaseMigrationRunner), без spring.sql.init
   datasource:
     url: jdbc:sqlite:data/claudeproxy.db
     driver-class-name: org.sqlite.JDBC
     hikari:
       # SQLite — один писатель: пул в одно соединение
       maximum-pool-size: 1
-  sql:
-    init:
-      mode: always
 
   # Claude Code шлёт мегабайты контекста: лимит чтения тел запросов/ответов
   codec:

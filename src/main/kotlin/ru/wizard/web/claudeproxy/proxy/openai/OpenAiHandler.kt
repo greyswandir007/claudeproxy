@@ -8,14 +8,16 @@ import reactor.core.publisher.Flux
 import ru.wizard.web.claudeproxy.routing.ModelRegistry
 
 /**
- * Обработка запроса Claude OpenAI-совместимым провайдером: полный перевод
+ * Обработка запроса Claude OpenAI-совместимыми провайдерами: полный перевод
  * протокола (запрос → Chat Completions, ответ/SSE → формат Claude).
+ * Маршруты — по приоритету; при повторимой ошибке (429/5xx/сеть) — переключение
+ * на следующий (для стриминга — только до первого события клиенту).
  */
 interface OpenAiHandler {
 
     suspend fun chatCompletion(
         exchange: ServerWebExchange,
-        route: ModelRegistry.Route,
+        routes: List<ModelRegistry.Route>,
         requestRoot: JsonNode,
         recordUsage: Boolean,
     ): ResponseEntity<Flux<DataBuffer>>

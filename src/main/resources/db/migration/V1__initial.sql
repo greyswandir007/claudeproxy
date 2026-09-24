@@ -39,3 +39,29 @@ CREATE TABLE IF NOT EXISTS api_key (
   revoked_at   INTEGER,                      -- NULL = активен
   last_used_at INTEGER
 );
+
+-- Провайдеры и модели: источник истины — БД (YAML — сид при старте, как с ключами).
+-- api_key может быть литералом или ссылкой ${ENV_VAR} (резолвится при загрузке реестра).
+CREATE TABLE IF NOT EXISTS provider (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  name          TEXT    NOT NULL UNIQUE,
+  type          TEXT    NOT NULL,            -- anthropic | openai
+  base_url      TEXT    NOT NULL,
+  api_key       TEXT    NOT NULL DEFAULT '',
+  extra_headers TEXT    NOT NULL DEFAULT '{}',
+  created_at    INTEGER NOT NULL,
+  updated_at    INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS model (
+  id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+  provider_id          INTEGER NOT NULL,
+  public_name          TEXT    NOT NULL UNIQUE,
+  upstream_name        TEXT    NOT NULL,
+  reasoning            TEXT    NOT NULL DEFAULT 'map',  -- map | off (openai)
+  max_completion_param INTEGER NOT NULL DEFAULT 0,
+  enabled              INTEGER NOT NULL DEFAULT 1,
+  created_at           INTEGER NOT NULL,
+  updated_at           INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_model_provider ON model(provider_id);

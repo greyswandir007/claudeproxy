@@ -352,7 +352,259 @@ class ProxyIntegrationTest {
         assertTrue(!remainingModels.contains("old-model"))
     }
 
+    @Test
+    fun `управление провайдерами и моделями через api`() {
+        // 1. Создание провайдера через UI-API (указывает на фейковый upstream)
+        val createProviderBody = webTestClient.post().uri("/api/providers")
+            .contentType(MediaType.APPLICATION_JSON)
+            .bodyValue(
+                """{"name":"ui-provider","type":"openai",
+                    "baseUrl":"http://127.0.0.1:${upstream.port()}","apiKey":"ui-provider-secret"}""",
+            )
+            .exchange().expectStatus().isCreated
+            .expectBody(String::class.java).returnResult().responseBody!!
+        val providerId = objectMapper.readTree(createProviderBody).path("id").asLong()
+
+        // 2. Дубликат имени провайдера — 409
+        webTestClient.post().uri("/api/providers")
+            .contentType(MediaType.APPLICATION_JSON)
+            .bodyValue("""{"name":"ui-provider","type":"openai","baseUrl":"http://127.0.0.1:1"}""")
+            .exchange().expectStatus().isEqualTo(409)
+
+        // 3. Модель у нового провайдера
+        val createModelBody = webTestClient.post().uri("/api/providers/$providerId/models")
+            .contentType(MediaType.APPLICATION_JSON)
+            .bodyValue(
+                """{"publicName":"ui-model","upstreamName":"openai-model",
+                    "reasoning":"map","maxCompletionParam":false}""",
+            )
+            .exchange().expectStatus().isCreated
+            .expectBody(String::class.java).returnResult().responseBody!!
+        val modelId = objectMapper.readTree(createModelBody).path("id").asLong()
+
+        // 4. Сразу работает через /v1/messages (реестр перезагружен)
+        webTestClient.post().uri("/v1/messages")
+            .header("x-api-key", SEED_API_KEY)
+            .contentType(MediaType.APPLICATION_JSON)
+            .bodyValue(CLAUDE_REQUEST_WITH_TOOLS.replace("fake-openai-model", "ui-model"))
+            .exchange().expectStatus().isOk
+            .expectBody()
+            .jsonPath("$.model").isEqualTo("ui-model")
+
+        // 5. Список: ключ не утекает, только превью
+        val providerListBody = webTestClient.get().uri("/api/providers")
+            .exchange().expectStatus().isOk
+            .expectBody(String::class.java).returnResult().responseBody!!
+        val uiProvider = objectMapper.readTree(providerListBody)
+            .firstOrNull { it.path("name").asText() == "ui-provider" }!!
+        val apiKeyPreview = uiProvider.path("apiKeyPreview").asText()
+        assertTrue(apiKeyPreview.isNotEmpty())
+        assertTrue(!apiKeyPreview.contains("ui-provider-secret"))
+        assertEquals(1, uiProvider.path("models").size())
+
+        // 6. Переименование модели — новое имя работает, старое 404
+        webTestClient.put().uri("/api/models/$modelId")
+            .contentType(MediaType.APPLICATION_JSON)
+            .bodyValue(
+                """{"publicName":"ui-model-renamed","upstreamName":"openai-model",
+                    "reasoning":"off","maxCompletionParam":false}""",
+            )
+            .exchange().expectStatus().isOk
+        webTestClient.post().uri("/v1/messages")
+            .header("x-api-key", SEED_API_KEY)
+            .contentType(MediaType.APPLICATION_JSON)
+            .bodyValue(CLAUDE_REQUEST_WITH_TOOLS.replace("fake-openai-model", "ui-model-renamed"))
+            .exchange().expectStatus().isOk
+        webTestClient.post().uri("/v1/messages")
+            .header("x-api-key", SEED_API_KEY)
+            .contentType(MediaType.APPLICATION_JSON)
+            .bodyValue("""{"model":"ui-model","max_tokens":10,"messages":[]}""")
+            .exchange().expectStatus().isNotFound
+
+        // 7. Удаление модели и провайдера
+        webTestClient.delete().uri("/api/models/$modelId").exchange().expectStatus().isNoContent
+        webTestClient.delete().uri("/api/providers/$providerId").exchange().expectStatus().isNoContent
+        webTestClient.post().uri("/v1/messages")
+            .header("x-api-key", SEED_API_KEY)
+            .contentType(MediaType.APPLICATION_JSON)
+            .bodyValue("""{"model":"ui-model-renamed","max_tokens":10,"messages":[]}""")
+            .exchange().expectStatus().isNotFound
+    }
+
+    @Test
+    fun `миграции применены и зафиксированы`() {
+        val appliedMigrations =
+            jdbcTemplate.queryForList("SELECT version FROM schema_migration ORDER BY version", Int::class.java)
+        assertTrue(appliedMigrations.containsAll(listOf(1, 2)))
+        // V2: колонки приоритета и выдачи на месте
+        jdbcTemplate.queryForObject("SELECT priority, exposed FROM model LIMIT 1") { resultSet, _ ->
+            // достаточно, что запрос не падает
+            resultSet.getInt(1) + resultSet.getInt(2)
+        }
+    }
+
+    @Test
+    fun `дискавери моделей провайдера`() {
+        webTestClient.post().uri("/api/providers/discover-models")
+            .contentType(MediaType.APPLICATION_JSON)
+            .bodyValue(
+                """{"type":"openai","baseUrl":"http://127.0.0.1:${upstreamPort()}","apiKey":"any"}""",
+            )
+            .exchange().expectStatus().isOk
+            .expectBody()
+            .jsonPath("$.models[0]").isEqualTo("discovered-model")
+            .jsonPath("$.models[1]").isEqualTo("openai-model")
+    }
+
+    private fun upstreamPort(): Int = upstream.port()
+
+    @Test
+    fun `выдача моделей скрывается флагами exposed`() {
+        val createdProvider = webTestClient.post().uri("/api/providers")
+            .contentType(MediaType.APPLICATION_JSON)
+            .bodyValue(
+                """{"name":"exposure-provider","type":"openai",
+                    "baseUrl":"http://127.0.0.1:${upstreamPort()}","apiKey":"exposure-secret"}""",
+            )
+            .exchange().expectStatus().isCreated
+            .expectBody(String::class.java).returnResult().responseBody!!
+        val providerId = objectMapper.readTree(createdProvider).path("id").asLong()
+
+        fun addModel(publicName: String): Long {
+            val createdModel = webTestClient.post().uri("/api/providers/$providerId/models")
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(
+                    """{"publicName":"$publicName","upstreamName":"openai-model",
+                        "reasoning":"map","maxCompletionParam":false,"priority":100}""",
+                )
+                .exchange().expectStatus().isCreated
+                .expectBody(String::class.java).returnResult().responseBody!!
+            return objectMapper.readTree(createdModel).path("id").asLong()
+        }
+        val visibleModelId = addModel("exposed-visible-model")
+        val hiddenModelId = addModel("exposed-hidden-model")
+
+        fun exposedModelNames(): List<String> =
+            objectMapper.readTree(
+                webTestClient.get().uri("/v1/models")
+                    .header("x-api-key", SEED_API_KEY)
+                    .exchange().expectStatus().isOk
+                    .expectBody(String::class.java).returnResult().responseBody!!,
+            ).path("data").map { it.path("id").asText() }
+
+        assertTrue(exposedModelNames().containsAll(listOf("exposed-visible-model", "exposed-hidden-model")))
+
+        // скрытая модель пропадает из списка, но остаётся маршрутизируемой
+        webTestClient.put().uri("/api/models/$hiddenModelId/exposure")
+            .contentType(MediaType.APPLICATION_JSON)
+            .bodyValue("""{"exposed":false}""")
+            .exchange().expectStatus().isOk
+        assertTrue(!exposedModelNames().contains("exposed-hidden-model"))
+        webTestClient.post().uri("/v1/messages")
+            .header("x-api-key", SEED_API_KEY)
+            .contentType(MediaType.APPLICATION_JSON)
+            .bodyValue(
+                CLAUDE_REQUEST_WITH_TOOLS.replace("fake-openai-model", "exposed-hidden-model"),
+            )
+            .exchange().expectStatus().isOk
+
+        // скрытие провайдера прянет и его видимые модели
+        webTestClient.put().uri("/api/providers/$providerId/exposure")
+            .contentType(MediaType.APPLICATION_JSON)
+            .bodyValue("""{"exposed":false}""")
+            .exchange().expectStatus().isOk
+        assertTrue(!exposedModelNames().contains("exposed-visible-model"))
+
+        webTestClient.delete().uri("/api/models/$visibleModelId").exchange().expectStatus().isNoContent
+        webTestClient.delete().uri("/api/models/$hiddenModelId").exchange().expectStatus().isNoContent
+        webTestClient.delete().uri("/api/providers/$providerId").exchange().expectStatus().isNoContent
+    }
+
+    @Test
+    fun `fallback переключает на второй маршрут при quota exceeded`() {
+        // primary: та же публичная модель, но upstream всегда отвечает 429
+        val primaryProvider = webTestClient.post().uri("/api/providers")
+            .contentType(MediaType.APPLICATION_JSON)
+            .bodyValue(
+                """{"name":"fallback-primary","type":"openai",
+                    "baseUrl":"http://127.0.0.1:${upstreamPort()}","apiKey":"primary-secret"}""",
+            )
+            .exchange().expectStatus().isCreated
+            .expectBody(String::class.java).returnResult().responseBody!!
+        val primaryProviderId = objectMapper.readTree(primaryProvider).path("id").asLong()
+        webTestClient.post().uri("/api/providers/$primaryProviderId/models")
+            .contentType(MediaType.APPLICATION_JSON)
+            .bodyValue(
+                """{"publicName":"fb-model","upstreamName":"fallback-primary-upstream",
+                    "reasoning":"map","maxCompletionParam":false,"priority":1}""",
+            )
+            .exchange().expectStatus().isCreated
+
+        // secondary: та же публичная модель у другого провайдера — работает
+        val secondaryProvider = webTestClient.post().uri("/api/providers")
+            .contentType(MediaType.APPLICATION_JSON)
+            .bodyValue(
+                """{"name":"fallback-secondary","type":"openai",
+                    "baseUrl":"http://127.0.0.1:${upstreamPort()}","apiKey":"secondary-secret"}""",
+            )
+            .exchange().expectStatus().isCreated
+            .expectBody(String::class.java).returnResult().responseBody!!
+        val secondaryProviderId = objectMapper.readTree(secondaryProvider).path("id").asLong()
+        webTestClient.post().uri("/api/providers/$secondaryProviderId/models")
+            .contentType(MediaType.APPLICATION_JSON)
+            .bodyValue(
+                """{"publicName":"fb-model","upstreamName":"openai-model",
+                    "reasoning":"map","maxCompletionParam":false,"priority":2}""",
+            )
+            .exchange().expectStatus().isCreated
+
+        // не-stream: ответ пришёл от secondary
+        val responseBody = webTestClient.post().uri("/v1/messages")
+            .header("x-api-key", SEED_API_KEY)
+            .contentType(MediaType.APPLICATION_JSON)
+            .bodyValue(CLAUDE_REQUEST_WITH_TOOLS.replace("fake-openai-model", "fb-model"))
+            .exchange().expectStatus().isOk
+            .expectBody(String::class.java).returnResult().responseBody!!
+        assertEquals("fb-model", objectMapper.readTree(responseBody).path("model").asText())
+
+        // usage: неудачная попытка primary (429) + успешная secondary
+        val failedRows = awaitUsageEventRows("model = 'fb-model' AND stream = 0 AND status = 429")
+        assertEquals("fallback-primary", failedRows.first()["provider"])
+        val successRows = awaitUsageEventRows("model = 'fb-model' AND stream = 0 AND status = 200")
+        assertEquals("fallback-secondary", successRows.first()["provider"])
+
+        // stream: тоже переключение до первого события
+        val streamBody = webTestClient.post().uri("/v1/messages")
+            .header("x-api-key", SEED_API_KEY)
+            .contentType(MediaType.APPLICATION_JSON)
+            .bodyValue(
+                CLAUDE_REQUEST_WITH_TOOLS
+                    .replace("fake-openai-model", "fb-model")
+                    .replace("\"max_tokens\":200", "\"max_tokens\":200,\"stream\":true"),
+            )
+            .exchange().expectStatus().isOk
+            .expectBody(String::class.java).returnResult().responseBody!!
+        assertTrue(streamBody.contains("event: message_stop"))
+        awaitUsageEventRows("model = 'fb-model' AND stream = 1 AND status = 200")
+
+        webTestClient.delete().uri("/api/providers/$primaryProviderId").exchange().expectStatus().isNoContent
+        webTestClient.delete().uri("/api/providers/$secondaryProviderId").exchange().expectStatus().isNoContent
+    }
+
     private fun asLong(value: Any?): Long = (value as Number).toLong()
+
+    private fun awaitUsageEventRows(condition: String): List<Map<String, Any?>> = runBlocking {
+        withTimeout(5_000) {
+            while (true) {
+                val usageEventRows =
+                    jdbcTemplate.queryForList("SELECT * FROM usage_event WHERE $condition")
+                if (usageEventRows.isNotEmpty()) return@withTimeout usageEventRows
+                delay(100)
+            }
+            @Suppress("UNREACHABLE_CODE")
+            error("недостижимо")
+        }
+    }
 
     private fun awaitUsageEventRow(condition: String): Map<String, Any?> = runBlocking {
         withTimeout(5_000) {
@@ -385,6 +637,30 @@ class ProxyIntegrationTest {
                             }.getOrNull()
                             val model = requestNode?.path("model")?.asText("") ?: ""
                             when {
+                                request.method() == io.netty.handler.codec.http.HttpMethod.GET &&
+                                    request.uri() == "/models" ->
+                                    response.status(HttpResponseStatus.OK)
+                                        .header("Content-Type", "application/json")
+                                        .sendString(
+                                            Mono.just(
+                                                """{"object":"list","data":[{"id":"discovered-model"},{"id":"openai-model"}]}""",
+                                            ),
+                                            CharsetUtil.UTF_8,
+                                        )
+                                        .then()
+
+                                request.uri().endsWith("/chat/completions") &&
+                                    model == "fallback-primary-upstream" ->
+                                    response.status(HttpResponseStatus.TOO_MANY_REQUESTS)
+                                        .header("Content-Type", "application/json")
+                                        .sendString(
+                                            Mono.just(
+                                                """{"error":{"message":"quota exceeded","type":"insufficient_quota"}}""",
+                                            ),
+                                            CharsetUtil.UTF_8,
+                                        )
+                                        .then()
+
                                 request.uri().endsWith("/chat/completions") ->
                                     handleChatCompletions(requestNode, response)
 

@@ -17,6 +17,7 @@ import java.util.concurrent.ConcurrentHashMap
  * Реализация ApiKeyService на JdbcTemplate (SQLite через DatabaseProvider).
  */
 @Service
+@org.springframework.context.annotation.DependsOn("databaseMigrationRunner")
 class JdbcApiKeyService(
     private val databaseProvider: DatabaseProvider,
     private val jdbcTemplate: JdbcTemplate,

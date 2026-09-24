@@ -1,5 +1,6 @@
 package ru.wizard.web.claudeproxy.api
 
+import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.annotation.GetMapping
 import org.springframework.web.bind.annotation.RequestParam
 import org.springframework.web.bind.annotation.RestController
@@ -44,10 +45,12 @@ class StatsController(
     @GetMapping("/api/window")
     suspend fun currentWindow(
         @RequestParam(name = "key") clientKey: String,
-    ): StatsService.WindowSummary? =
-        statsService.windowHistory(clientKey, limit = 1).firstOrNull { window ->
-            window.endsAtMilliseconds > System.currentTimeMillis()
-        }
+    ): ResponseEntity<StatsService.WindowSummary> {
+        val activeWindow = statsService.windowHistory(clientKey, limit = 1)
+            .firstOrNull { window -> window.endsAtMilliseconds > System.currentTimeMillis() }
+            ?: return ResponseEntity.noContent().build()
+        return ResponseEntity.ok(activeWindow)
+    }
 
     @GetMapping("/api/windows")
     suspend fun windowHistory(
@@ -64,23 +67,26 @@ class StatsController(
     ): List<StatsService.TimelinePoint> =
         statsService.timeline(bucket, fromMilliseconds, toMilliseconds, clientKey)
 
-    /** Провайдеры и модели (read-only, без ключей провайдеров). */
+    /** Провайдеры и модели из реестра (read-only, без ключей провайдеров). */
     @GetMapping("/api/config")
-    fun configuration(): Map<String, Any?> = mapOf(
-        "windowHours" to proxyProperties.windowHours,
-        "exposedModels" to modelRegistry.exposedModels(),
-        "providers" to proxyProperties.providers.map { provider ->
-            mapOf(
-                "name" to provider.name,
-                "type" to provider.type,
-                "baseUrl" to provider.baseUrl,
-                "models" to provider.models.map { modelMapping ->
-                    mapOf(
-                        "public" to modelMapping.`public`,
-                        "upstream" to modelMapping.upstream,
-                    )
-                },
-            )
-        },
-    )
+    fun configuration(): Map<String, Any?> {
+        val routesByProvider = modelRegistry.routes().groupBy { it.provider.name }
+        return mapOf(
+            "windowHours" to proxyProperties.windowHours,
+            "exposedModels" to modelRegistry.exposedModels(),
+            "providers" to routesByProvider.map { (providerName, providerRoutes) ->
+                mapOf(
+                    "name" to providerName,
+                    "type" to providerRoutes.first().provider.type,
+                    "baseUrl" to providerRoutes.first().provider.baseUrl,
+                    "models" to providerRoutes.map { route ->
+                        mapOf(
+                            "public" to route.mapping.publicName,
+                            "upstream" to route.mapping.upstreamName,
+                        )
+                    },
+                )
+            },
+        )
+    }
 }

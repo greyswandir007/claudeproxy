@@ -18,6 +18,7 @@ import reactor.core.publisher.SignalType
 import ru.wizard.web.claudeproxy.auth.ApiKeyAuthFilter
 import ru.wizard.web.claudeproxy.proxy.UsageAccumulator
 import ru.wizard.web.claudeproxy.proxy.UpstreamError
+import ru.wizard.web.claudeproxy.proxy.UpstreamRetryPolicy
 import ru.wizard.web.claudeproxy.proxy.openai.OpenAiHandler
 import ru.wizard.web.claudeproxy.routing.ModelRegistry
 import ru.wizard.web.claudeproxy.usage.UsageEvent
@@ -26,7 +27,8 @@ import java.nio.charset.StandardCharsets.UTF_8
 
 /**
  * Реализация OpenAiHandler на WebClient: перевод запроса → Chat Completions →
- * перевод ответа/SSE обратно в протокол Claude, с записью usage.
+ * перевод ответа/SSE обратно в протокол Claude, с записью usage и переключением
+ * на следующий маршрут при повторимых ошибках.
  */
 @Service
 class WebClientOpenAiHandler(
@@ -45,108 +47,23 @@ class WebClientOpenAiHandler(
 
     override suspend fun chatCompletion(
         exchange: ServerWebExchange,
-        route: ModelRegistry.Route,
+        routes: List<ModelRegistry.Route>,
         requestRoot: JsonNode,
         recordUsage: Boolean,
     ): ResponseEntity<Flux<DataBuffer>> {
-        val provider = route.provider
-        val translatedRequest = requestTranslator.translate(requestRoot, route)
-        val requestBody = objectMapper.writeValueAsBytes(translatedRequest)
         val stream = requestRoot.path("stream").asBoolean(false)
         val clientKey = exchange.getAttribute(ApiKeyAuthFilter.CLIENT_KEY_ATTRIBUTE) ?: "unknown"
-        val startedAtMilliseconds = System.currentTimeMillis()
-
-        val requestSpecification = webClient.post()
-            .uri(provider.baseUrl.trimEnd('/') + "/chat/completions")
-            .contentType(MediaType.APPLICATION_JSON)
-            .header(HttpHeaders.AUTHORIZATION, "Bearer ${provider.apiKey}")
-        provider.extraHeaders.forEach { (name, value) -> requestSpecification.header(name, value) }
-        val responseSpecification = requestSpecification.bodyValue(requestBody).retrieve()
-
         return if (stream) {
-            val sseTranslator = OpenAiSseTranslator(objectMapper, route.mapping.`public`)
-            val responseFlux = responseSpecification
-                .onStatus({ !it.is2xxSuccessful }) { response ->
-                    response.toEntity(String::class.java).map { errorTranslator.translate(it) }
-                }
-                .bodyToFlux(serverSentEventTypeReference)
-                .concatMap { serverSentEvent ->
-                    Flux.fromIterable(sseTranslator.onData(serverSentEvent.data()))
-                }
-                .doFinally { signal ->
-                    if (recordUsage) {
-                        usageRecorder.recordAsync(
-                            usageEvent(
-                                clientKey = clientKey,
-                                route = route,
-                                stream = true,
-                                usageAccumulator = sseTranslator.usageAccumulator,
-                                startedAtMilliseconds = startedAtMilliseconds,
-                                status = signalStatus(signal),
-                                error = null,
-                            ),
-                        )
-                    }
-                }
-                .map { eventText -> exchange.response.bufferFactory().wrap(eventText.toByteArray(UTF_8)) }
-                .onErrorResume { exception ->
-                    logger.error(exception) { "Обрыв стрима от провайдера '${provider.name}'" }
-                    Flux.just(exchange.response.bufferFactory().wrap(serverSentEventErrorBytes(exception.message)))
-                }
             ResponseEntity.ok()
                 .contentType(MediaType.TEXT_EVENT_STREAM)
                 .header(HttpHeaders.CACHE_CONTROL, "no-cache")
-                .body(responseFlux)
-        } else {
-            val responseEntity = try {
-                responseSpecification
-                    .onStatus({ !it.is2xxSuccessful }) { response ->
-                        response.toEntity(String::class.java).map { errorTranslator.translate(it) }
-                    }
-                    .toEntity(String::class.java)
-                    .awaitSingle()
-            } catch (upstreamError: UpstreamError) {
-                if (recordUsage) {
-                    usageRecorder.recordAsync(
-                        usageEvent(
-                            clientKey = clientKey,
-                            route = route,
-                            stream = false,
-                            usageAccumulator = UsageAccumulator(),
-                            startedAtMilliseconds = startedAtMilliseconds,
-                            status = upstreamError.status.value(),
-                            error = "HTTP ${upstreamError.status.value()}: " +
-                                "${upstreamError.upstreamBody.take(300)}",
-                        ),
-                    )
-                }
-                throw upstreamError
-            }
-            val translated = responseTranslator.translate(responseEntity.body, route.mapping.`public`)
-            if (recordUsage) {
-                usageRecorder.recordAsync(
-                    usageEvent(
-                        clientKey = clientKey,
-                        route = route,
-                        stream = false,
-                        usageAccumulator = translated.usageAccumulator,
-                        startedAtMilliseconds = startedAtMilliseconds,
-                        status = responseEntity.statusCode.value(),
-                        error = if (!responseEntity.statusCode.is2xxSuccessful) {
-                            "HTTP ${responseEntity.statusCode.value()}"
-                        } else {
-                            null
-                        },
-                    ),
-                )
-            }
-            ResponseEntity.ok()
-                .contentType(MediaType.APPLICATION_JSON)
                 .body(
-                    Flux.just(
-                        exchange.response.bufferFactory().wrap(translated.responseBody.toByteArray(UTF_8)),
-                    ),
+                    Flux.defer {
+                        attemptStream(exchange, routes, 0, requestRoot, recordUsage, clientKey)
+                    },
                 )
+        } else {
+            attemptSequential(exchange, routes, requestRoot, recordUsage, clientKey)
         }
     }
 
@@ -167,11 +84,193 @@ class WebClientOpenAiHandler(
             )
     }
 
+    private suspend fun attemptSequential(
+        exchange: ServerWebExchange,
+        routes: List<ModelRegistry.Route>,
+        requestRoot: JsonNode,
+        recordUsage: Boolean,
+        clientKey: String,
+    ): ResponseEntity<Flux<DataBuffer>> {
+        for ((index, route) in routes.withIndex()) {
+            val startedAtMilliseconds = System.currentTimeMillis()
+            try {
+                val responseEntity = buildCall(route, requestRoot)
+                    .retrieve()
+                    .onStatus({ !it.is2xxSuccessful }) { response ->
+                        response.toEntity(String::class.java).map { errorTranslator.translate(it) }
+                    }
+                    .toEntity(String::class.java)
+                    .awaitSingle()
+                if (recordUsage) {
+                    val translated = responseTranslator.translate(
+                        responseEntity.body,
+                        route.mapping.publicName,
+                    )
+                    usageRecorder.recordAsync(
+                        usageEvent(
+                            clientKey = clientKey,
+                            route = route,
+                            stream = false,
+                            usageAccumulator = translated.usageAccumulator,
+                            startedAtMilliseconds = startedAtMilliseconds,
+                            status = responseEntity.statusCode.value(),
+                            error = if (!responseEntity.statusCode.is2xxSuccessful()) {
+                                "HTTP ${responseEntity.statusCode.value()}"
+                            } else {
+                                null
+                            },
+                        ),
+                    )
+                    return ResponseEntity.ok()
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .body(
+                            Flux.just(
+                                exchange.response.bufferFactory()
+                                    .wrap(translated.responseBody.toByteArray(UTF_8)),
+                            ),
+                        )
+                }
+                return ResponseEntity.ok()
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(
+                        Flux.just(
+                            exchange.response.bufferFactory()
+                                .wrap(
+                                    responseTranslator.translate(
+                                        responseEntity.body,
+                                        route.mapping.publicName,
+                                    ).responseBody.toByteArray(UTF_8),
+                                ),
+                        ),
+                    )
+            } catch (error: Throwable) {
+                if (recordUsage) {
+                    usageRecorder.recordAsync(
+                        usageEvent(
+                            clientKey = clientKey,
+                            route = route,
+                            stream = false,
+                            usageAccumulator = UsageAccumulator(),
+                            startedAtMilliseconds = startedAtMilliseconds,
+                            status = errorStatus(error),
+                            error = shortError(error),
+                        ),
+                    )
+                }
+                if (!UpstreamRetryPolicy.isRetryable(error) || index == routes.lastIndex) {
+                    throw error
+                }
+                logger.warn(error) {
+                    "Маршрут '${route.provider.name}/${route.mapping.upstreamName}' не отвечает " +
+                        "(${shortError(error)}) — переключаюсь на следующий"
+                }
+            }
+        }
+        throw IllegalStateException("Список маршрутов пуст")
+    }
+
+    private fun attemptStream(
+        exchange: ServerWebExchange,
+        routes: List<ModelRegistry.Route>,
+        index: Int,
+        requestRoot: JsonNode,
+        recordUsage: Boolean,
+        clientKey: String,
+    ): Flux<DataBuffer> {
+        val route = routes[index]
+        val startedAtMilliseconds = System.currentTimeMillis()
+        val sseTranslator = OpenAiSseTranslator(objectMapper, route.mapping.publicName)
+        var emittedAnything = false
+        return buildCall(route, requestRoot)
+            .retrieve()
+            .onStatus({ !it.is2xxSuccessful }) { response ->
+                response.toEntity(String::class.java).map { errorTranslator.translate(it) }
+            }
+            .bodyToFlux(serverSentEventTypeReference)
+            .concatMap { serverSentEvent ->
+                val events = sseTranslator.onData(serverSentEvent.data())
+                if (events.isNotEmpty()) {
+                    emittedAnything = true
+                }
+                Flux.fromIterable(events)
+            }
+            .doOnError { error ->
+                if (recordUsage) {
+                    usageRecorder.recordAsync(
+                        usageEvent(
+                            clientKey = clientKey,
+                            route = route,
+                            stream = true,
+                            usageAccumulator = sseTranslator.usageAccumulator,
+                            startedAtMilliseconds = startedAtMilliseconds,
+                            status = errorStatus(error),
+                            error = shortError(error),
+                        ),
+                    )
+                }
+            }
+            .doFinally { signal ->
+                if (recordUsage && signal != SignalType.ON_ERROR) {
+                    usageRecorder.recordAsync(
+                        usageEvent(
+                            clientKey = clientKey,
+                            route = route,
+                            stream = true,
+                            usageAccumulator = sseTranslator.usageAccumulator,
+                            startedAtMilliseconds = startedAtMilliseconds,
+                            status = signalStatus(signal),
+                            error = null,
+                        ),
+                    )
+                }
+            }
+            .map { eventText -> eventText.toByteArray(UTF_8) }
+            .map { eventBytes -> exchange.response.bufferFactory().wrap(eventBytes) }
+            .onErrorResume { error ->
+                val canFallback = UpstreamRetryPolicy.isRetryable(error) &&
+                    !emittedAnything &&
+                    index < routes.lastIndex
+                if (canFallback) {
+                    logger.warn(error) {
+                        "Маршрут '${route.provider.name}/${route.mapping.upstreamName}' упал до первого " +
+                            "события (${shortError(error)}) — переключаюсь на следующий"
+                    }
+                    attemptStream(exchange, routes, index + 1, requestRoot, recordUsage, clientKey)
+                } else {
+                    logger.error(error) { "Обрыв стрима от провайдера '${route.provider.name}'" }
+                    Flux.just(
+                        exchange.response.bufferFactory()
+                            .wrap(serverSentEventErrorBytes(error.message)),
+                    )
+                }
+            }
+    }
+
+    private fun buildCall(
+        route: ModelRegistry.Route,
+        requestRoot: JsonNode,
+    ): WebClient.RequestHeadersSpec<*> {
+        val provider = route.provider
+        val translatedRequest = requestTranslator.translate(requestRoot, route)
+        val requestSpecification = webClient.post()
+            .uri(provider.baseUrl.trimEnd('/') + "/chat/completions")
+            .contentType(MediaType.APPLICATION_JSON)
+            .header(HttpHeaders.AUTHORIZATION, "Bearer ${provider.apiKey}")
+        provider.extraHeaders.forEach { (name, value) -> requestSpecification.header(name, value) }
+        return requestSpecification.bodyValue(objectMapper.writeValueAsBytes(translatedRequest))
+    }
+
     private fun signalStatus(signal: SignalType): Int = when (signal) {
         SignalType.ON_COMPLETE -> 200
         SignalType.CANCEL -> 0
         else -> 500
     }
+
+    private fun errorStatus(error: Throwable): Int =
+        (error as? UpstreamError)?.status?.value() ?: 502
+
+    private fun shortError(error: Throwable): String =
+        (error.message ?: error.javaClass.simpleName).take(300)
 
     private fun usageEvent(
         clientKey: String,
@@ -185,8 +284,8 @@ class WebClientOpenAiHandler(
         ts = System.currentTimeMillis(),
         clientKey = clientKey,
         provider = route.provider.name,
-        model = route.mapping.`public`,
-        upstreamModel = route.mapping.upstream,
+        model = route.mapping.publicName,
+        upstreamModel = route.mapping.upstreamName,
         stream = stream,
         inputTokens = usageAccumulator.inputTokens,
         outputTokens = usageAccumulator.outputTokens,

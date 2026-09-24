@@ -72,7 +72,9 @@ async function getJson<T>(path: string): Promise<T> {
   if (!response.ok) {
     throw new Error(`GET ${path} → HTTP ${response.status}`)
   }
-  return response.json() as Promise<T>
+  // 204/пустое тело (например, /api/window без активного окна) → null
+  const responseText = await response.text()
+  return (responseText.length === 0 ? null : JSON.parse(responseText)) as T
 }
 
 async function postJson<T>(path: string, body?: unknown): Promise<T> {
@@ -86,6 +88,67 @@ async function postJson<T>(path: string, body?: unknown): Promise<T> {
     throw new Error(`POST ${path} → HTTP ${response.status} ${errorText}`)
   }
   return response.json() as Promise<T>
+}
+
+async function putJson<T>(path: string, body: unknown): Promise<T> {
+  const response = await fetch(path, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  if (!response.ok) {
+    const errorText = await response.text().catch(() => '')
+    throw new Error(`PUT ${path} → HTTP ${response.status} ${errorText}`)
+  }
+  return response.json() as Promise<T>
+}
+
+async function deleteRequest(path: string): Promise<void> {
+  const response = await fetch(path, { method: 'DELETE' })
+  if (!response.ok) {
+    throw new Error(`DELETE ${path} → HTTP ${response.status}`)
+  }
+}
+
+export interface ManagedModel {
+  id: number
+  providerId: number
+  publicName: string
+  upstreamName: string
+  reasoning: string
+  maxCompletionParam: boolean
+  priority: number
+  exposed: boolean
+}
+
+export interface ManagedProvider {
+  id: number
+  name: string
+  type: string
+  baseUrl: string
+  apiKeyPreview: string
+  extraHeaders: Record<string, string>
+  exposed: boolean
+  models: ManagedModel[]
+  createdAt: number
+  updatedAt: number
+}
+
+export interface ProviderRequest {
+  name: string
+  type: string
+  baseUrl: string
+  apiKey?: string
+  extraHeaders?: Record<string, string>
+  exposed?: boolean
+}
+
+export interface ModelRequest {
+  publicName: string
+  upstreamName: string
+  reasoning: string
+  maxCompletionParam: boolean
+  priority: number
 }
 
 export const api = {
@@ -104,4 +167,20 @@ export const api = {
   keys: () => getJson<ClientKey[]>('/api/keys'),
   createKey: (name: string) => postJson<CreatedKey>('/api/keys', { name }),
   revokeKey: (id: number) => postJson<{ revoked: boolean }>(`/api/keys/${id}/revoke`),
+  listProviders: () => getJson<ManagedProvider[]>('/api/providers'),
+  createProvider: (request: ProviderRequest) => postJson<ManagedProvider>('/api/providers', request),
+  updateProvider: (id: number, request: ProviderRequest) =>
+    putJson<ManagedProvider>(`/api/providers/${id}`, request),
+  deleteProvider: (id: number) => deleteRequest(`/api/providers/${id}`),
+  createModel: (providerId: number, request: ModelRequest) =>
+    postJson<ManagedModel>(`/api/providers/${providerId}/models`, request),
+  updateModel: (id: number, request: ModelRequest) =>
+    putJson<ManagedModel>(`/api/models/${id}`, request),
+  deleteModel: (id: number) => deleteRequest(`/api/models/${id}`),
+  discoverModels: (request: { type: string; baseUrl: string; apiKey?: string; providerId?: number }) =>
+    postJson<{ models: string[] }>('/api/providers/discover-models', request),
+  setProviderExposed: (id: number, exposed: boolean) =>
+    putJson<{ exposed: boolean }>(`/api/providers/${id}/exposure`, { exposed }),
+  setModelExposed: (id: number, exposed: boolean) =>
+    putJson<{ exposed: boolean }>(`/api/models/${id}/exposure`, { exposed }),
 }

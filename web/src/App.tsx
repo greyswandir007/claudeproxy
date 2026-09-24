@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react'
 import DashboardPage from './pages/DashboardPage'
+import ExposurePage from './pages/ExposurePage'
 import KeysPage from './pages/KeysPage'
 import ModelsPage from './pages/ModelsPage'
 
-type Page = 'dashboard' | 'keys' | 'models'
+type Page = 'dashboard' | 'keys' | 'models' | 'exposure'
 
 const REFRESH_INTERVAL_MILLISECONDS = 30_000
 
@@ -48,6 +49,12 @@ export default function App() {
           >
             Модели и провайдеры
           </button>
+          <button
+            className={page === 'exposure' ? 'tab tab-active' : 'tab'}
+            onClick={() => setPage('exposure')}
+          >
+            Выдача моделей
+          </button>
         </nav>
         <div className="app-refresh">
           <span className="muted">
@@ -62,6 +69,7 @@ export default function App() {
         {page === 'dashboard' && <DashboardPage refreshTick={refreshTick} />}
         {page === 'keys' && <KeysPage refreshTick={refreshTick} />}
         {page === 'models' && <ModelsPage refreshTick={refreshTick} />}
+        {page === 'exposure' && <ExposurePage refreshTick={refreshTick} />}
       </main>
     </div>
   )

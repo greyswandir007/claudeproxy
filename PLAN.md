@@ -25,12 +25,25 @@ retention-очистка usage_event.
 - отдаёт **дашборд**: токены за текущее 5-часовое окно, за неделю и за месяц —
   всего, по моделям, по провайдерам и по клиентским ключам;
 - **генерирует и отзывает клиентские ключи** на странице «Ключи» дашборда
-  (в БД — только SHA-256-хэши; YAML — сид стартовых ключей).
+  (в БД — только SHA-256-хэши; YAML — сид стартовых ключей);
+- **управляет провайдерами и моделями** из UI с хранением в БД
+  (YAML — сид; изменения применяются сразу перезагрузкой реестра; у форм —
+  базовый набор полей и расширенный, развёрнутый при редактировании);
+- **миграции БД** (db/migration/V*.sql, DatabaseMigrationRunner, транзакция на файл);
+- **дискавери моделей провайдера** (GET /models у openai, /v1/models у anthropic)
+  с выбором upstream-имени из списка при настройке моделей;
+- **экран «Выдача моделей»**: что отдавать в GET /v1/models — секциями
+  Claude/OpenAI, выбор провайдером или отдельными моделями (скрытые остаются
+  маршрутизируемыми);
+- **приоритеты и fallback**: public-имя может обслуживаться несколькими
+  провайдерами (priority, меньше = выше); при повторимых ошибках
+  (429 quota/5xx/сеть) — переключение на следующий маршрут, для стриминга —
+  только до первого события клиенту; неудачные попытки пишутся в usage.
 
 ### Не-цели первой версии
 
-- Редактирование провайдеров из UI (провайдеры и модели — только YAML-конфиг;
-  через UI управляются лишь клиентские ключи прокси).
+- Балансировка/failover между провайдерами на одну и ту же модель
+  (управление провайдерами и моделями из UI — реализовано).
 - Балансировка/failover между провайдерами на одну и ту же модель.
 - Batch API (`/v1/messages/batches`), Files API, MCP-коннекторы.
 - Аутентификация дашборда (по умолчанию слушаем 127.0.0.1).
@@ -380,9 +393,15 @@ claudeproxy/
 │   ├── auth/impl/JdbcApiKeyService.kt  # реализация на JdbcTemplate
 │   ├── auth/BasicAuthWebFilter.kt      # Basic Auth дашборда и /api (production)
 │   ├── routing/ModelRegistry.kt        # интерфейс реестра моделей
-│   ├── routing/impl/StaticModelRegistry.kt  # строится из конфига при старте
+│   ├── routing/impl/DynamicModelRegistry.kt # снимок из БД, reload() после мутаций
+│   ├── providers/ProviderModelService.kt    # CRUD провайдеров/моделей + сид из YAML
+│   ├── providers/ProviderModelDiscoveryService.kt  # список моделей у провайдера
+│   ├── providers/impl/JdbcProviderModelService.kt
+│   ├── providers/impl/WebClientProviderModelDiscoveryService.kt
 │   ├── db/DatabaseProvider.kt          # интерфейс доступа к БД (абстракция от СУБД)
+│   ├── db/DatabaseMigrationRunner.kt   # миграции db/migration/V*.sql (транзакция на файл)
 │   ├── db/impl/SqliteDatabaseProvider.kt     # SQLite: последовательный диспетчер
+│   ├── proxy/UpstreamRetryPolicy.kt    # какие ошибки переключают маршрут (429/5xx/сеть)
 │   ├── http/UpstreamWebClientConfiguration.kt  # общий WebClient провайдеров
 │   ├── proxy/
 │   │   ├── MessagesController.kt      # POST /v1/messages + /v1/messages/count_tokens
@@ -400,10 +419,11 @@ claudeproxy/
 │   │   ├── impl/JdbcWindowService.kt
 │   │   └── StatsService.kt            # SQL-агрегаты для /api
 │   ├── api/StatsController.kt         # /api/**: агрегаты статистики
-│   └── api/KeyController.kt           # /api/keys: генерация/список/отзыв
+│   ├── api/KeyController.kt           # /api/keys: генерация/список/отзыв
+│   └── api/ProvidersController.kt     # /api/providers|models: CRUD провайдеров и моделей
 ├── src/main/resources/
-│   ├── application.yml                # дефолты (порт, virtual threads, datasource)
-│   └── schema.sql
+│   ├── application.yml                # дефолты (порт, datasource, кодек-лимиты)
+│   └── db/migration/                  # V1__initial.sql, V2__priority_exposure_and_fallback.sql, …
 └── web/                               # React TS (Vite)
     ├── package.json, vite.config.ts, tsconfig.json
     └── src/{App.tsx, api/, pages/, components/}
