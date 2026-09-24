@@ -84,6 +84,29 @@ Vite + Recharts**.
 
    Либо `npm run build` — собранный дашборд раздаётся самим бэкендом на `/`.
 
+4. **Production-сборка одной командой** (дашборд встраивается в jar):
+
+   ```bash
+   ./gradlew buildDashboard bootJar
+   java -jar build/libs/claudeproxy-0.0.1-SNAPSHOT.jar
+   ```
+
+## Production
+
+При выносе прокси в сеть включите **Basic Auth дашборда** (config/application.yml) —
+
+```yaml
+claudeproxy:
+  dashboard:
+    auth:
+      username: admin
+      password: ${DASHBOARD_PASSWORD}
+```
+
+– и осознанно меняйте адрес прослушивания (`server.address`). Эндпоинты `/v1/*`
+под Basic Auth не ставятся: клиенты аутентифицируются api-ключами прокси.
+Пока учётные данные не заданы, прокси должен слушать только `127.0.0.1`.
+
 ## Подключение Claude Code
 
 ```bash
@@ -115,4 +138,6 @@ cd web && npm run build # сборка дашборда в web/dist
 
 ## Статус
 
-🚧 Проект в разработке. Реализация идёт по этапам M1–M5 из плана.
+✅ **v1 реализована** (M1–M5 из [PLAN.md](PLAN.md#13-этапы)): проксирование с полным
+переводом протокола, учёт токенов с 5-часовыми окнами, дашборд, управление ключами,
+Basic Auth для production, retention-очистка статистики, встраивание дашборда в jar.

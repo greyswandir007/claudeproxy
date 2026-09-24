@@ -41,3 +41,35 @@ kotlin {
 tasks.withType<Test> {
 	useJUnitPlatform()
 }
+
+// Дашборд: сборка (npm) и встраивание web/dist в jar как classpath:/static/.
+val buildDashboard = tasks.register<Exec>("buildDashboard") {
+	workingDir = file("web")
+	commandLine(
+		if (System.getProperty("os.name").lowercase().contains("windows")) {
+			listOf("cmd", "/c", "npm", "install", "&&", "npm", "run", "build")
+		} else {
+			listOf("sh", "-c", "npm install && npm run build")
+		},
+	)
+	inputs.dir("web/src")
+	inputs.files(
+		"web/package.json",
+		"web/package-lock.json",
+		"web/index.html",
+		"web/vite.config.ts",
+		"web/tsconfig.json",
+	)
+	outputs.dir("web/dist")
+}
+
+val copyDashboardIntoJar = tasks.register<Copy>("copyDashboardIntoJar") {
+	from("web/dist")
+	into(layout.buildDirectory.dir("resources/main/static"))
+	onlyIf { file("web/dist").exists() }
+	mustRunAfter(tasks.named("processResources"))
+}
+
+tasks.named("bootJar") { dependsOn(copyDashboardIntoJar) }
+tasks.named("jar") { dependsOn(copyDashboardIntoJar) }
+tasks.named("resolveMainClassName") { dependsOn(copyDashboardIntoJar) }

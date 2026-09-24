@@ -2,10 +2,11 @@
 
 Статус: план согласован 2026-09-24; стек обновлён по решению от там же — реактивный.
 Backend — Kotlin + Spring **WebFlux** (корутины + Flow), frontend — React + TypeScript,
-БД — SQLite. **M1–M4 реализованы** (2026-09-24): конфигурация, реестр моделей,
-auth по ключам из БД, `/v1/models`, pass-through Anthropic и полный перевод
+БД — SQLite. **v1 готова — M1–M5 реализованы** (2026-09-24): конфигурация, реестр
+моделей, auth по ключам из БД, `/v1/models`, pass-through Anthropic и полный перевод
 Claude ↔ OpenAI, usage + окна, Stats API и управление ключами; дашборд React+TS
-(Vite + Recharts, тёмная тема, палитра валидирована) раздаётся бэкендом из web/dist.
+раздаётся бэкендом и встраивается в jar (buildDashboard); Basic Auth для production;
+retention-очистка usage_event.
 
 ## 1. Что строим
 
@@ -416,7 +417,7 @@ claudeproxy/
 | **M2** ✅ | OpenAI-перевод: не-stream, затем stream + tools + reasoning, count_tokens | Claude Code полноценно работает с OpenAI-провайдером (инструменты, стриминг) |
 | **M3** ✅ | Stats API (`/api`) со всеми агрегатами; управление ключами (`/api/keys`): генерация, список, отзыв, сид из YAML | curl'ом получаем summary/by-model/timeline/windows; сгенерированный ключ проходит auth |
 | **M4** ✅ | Фронтенд-дашборд + экран «Ключи» | Экран показывает окна/таблицы/график, автообновление; ключ генерируется из UI и работает |
-| **M5** | Полировка: сборка `web/dist` в jar, логирование (kotlin-logging), Basic Auth дашборда для production, retention, обработка обрывов, README-финал | Одна команда запуска, всё работает end-to-end; дашборд за Basic Auth |
+| **M5** ✅ | Полировка: сборка `web/dist` в jar, логирование (kotlin-logging), Basic Auth дашборда для production, retention, обработка обрывов, README-финал | Одна команда запуска, всё работает end-to-end; дашборд за Basic Auth |
 
 ## 14. Риски и противоядия
 

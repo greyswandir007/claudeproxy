@@ -40,6 +40,9 @@ class ProxyIntegrationTest {
     @Autowired
     private lateinit var jdbcTemplate: JdbcTemplate
 
+    @Autowired
+    private lateinit var usageRetentionService: ru.wizard.web.claudeproxy.usage.UsageRetentionService
+
     private lateinit var webTestClient: WebTestClient
 
     @BeforeEach
@@ -323,6 +326,30 @@ class ProxyIntegrationTest {
             .expectBody()
             .jsonPath("$.providers[1].name").isEqualTo("openai-fake")
             .jsonPath("$.exposedModels[0]").isEqualTo("fake-model")
+    }
+
+    @Test
+    fun `retention удаляет только устаревшие события`() = kotlinx.coroutines.runBlocking {
+        val now = System.currentTimeMillis()
+        val outdatedTimestamp = now - 366L * 86_400_000L
+        for (pair in listOf("old-model" to outdatedTimestamp, "new-model" to now)) {
+            jdbcTemplate.update(
+                """INSERT INTO usage_event
+                   (ts, client_key, provider, model, upstream_model, stream,
+                    input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens)
+                   VALUES (?,?,?,?,?,0,1,1,0,0)""",
+                pair.second,
+                "test",
+                "fake",
+                pair.first,
+                "upstream-${pair.first}",
+            )
+        }
+        usageRetentionService.deleteOutdatedEvents()
+        val remainingModels =
+            jdbcTemplate.queryForList("SELECT model FROM usage_event", String::class.java)
+        assertTrue(remainingModels.contains("new-model"))
+        assertTrue(!remainingModels.contains("old-model"))
     }
 
     private fun asLong(value: Any?): Long = (value as Number).toLong()
