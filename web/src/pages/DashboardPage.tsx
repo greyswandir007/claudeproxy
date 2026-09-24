@@ -3,12 +3,14 @@ import {
   api,
   type ClientKey,
   type GroupedUsage,
+  type ProviderLimitUsage,
   type ProxyConfig,
   type RangeSummary,
   type TimelinePoint,
   type WindowSummary,
 } from '../api/client'
 import PeriodCard from '../components/PeriodCard'
+import ProviderLimitBars from '../components/ProviderLimitBars'
 import TimelineChart from '../components/TimelineChart'
 import UsageTable from '../components/UsageTable'
 import WindowCard from '../components/WindowCard'
@@ -22,6 +24,7 @@ export default function DashboardPage({ refreshTick }: { refreshTick: number }) 
   const [clientKeys, setClientKeys] = useState<ClientKey[]>([])
   const [selectedKey, setSelectedKey] = useState<string | null>(null)
   const [proxyConfig, setProxyConfig] = useState<ProxyConfig | null>(null)
+  const [providerLimits, setProviderLimits] = useState<ProviderLimitUsage[]>([])
   const [clientWindow, setClientWindow] = useState<WindowSummary | null>(null)
   const [summaries, setSummaries] = useState<RangeSummary[]>([])
   const [byModelRows, setByModelRows] = useState<GroupedUsage[]>([])
@@ -53,6 +56,10 @@ export default function DashboardPage({ refreshTick }: { refreshTick: number }) 
       .config()
       .then(setProxyConfig)
       .catch(() => setProxyConfig(null))
+    api
+      .providerLimitUsage()
+      .then(setProviderLimits)
+      .catch(() => setProviderLimits([]))
   }, [refreshTick])
 
   useEffect(() => {
@@ -153,6 +160,20 @@ export default function DashboardPage({ refreshTick }: { refreshTick: number }) 
         <UsageTable title="По моделям (7 дней)" rows={byModelRows} labelTitle="Модель" />
         <UsageTable title="По провайдерам (7 дней)" rows={byProviderRows} labelTitle="Провайдер" />
       </div>
+      {providerLimits.length > 0 && (
+        <section className="card">
+          <h2>
+            Лимиты провайдеров
+            <span className="card-note">информационные; графики моделей — относительно лимита</span>
+          </h2>
+          {providerLimits.map((limitUsage) => (
+            <div key={limitUsage.providerName} className="dashboard-limit-provider">
+              <h3>{limitUsage.providerName}</h3>
+              <ProviderLimitBars usage={limitUsage} />
+            </div>
+          ))}
+        </section>
+      )}
       {keyParameter && <WindowHistoryTable windows={windows} />}
     </div>
   )

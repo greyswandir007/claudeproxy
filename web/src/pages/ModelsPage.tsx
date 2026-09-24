@@ -1,12 +1,20 @@
 import { useCallback, useEffect, useState } from 'react'
-import { api, type ManagedModel, type ManagedProvider, type ProxyConfig } from '../api/client'
+import {
+  api,
+  type ManagedModel,
+  type ManagedProvider,
+  type ProviderLimitUsage,
+  type ProxyConfig,
+} from '../api/client'
 import ModelForm from '../components/ModelForm'
 import ProviderForm from '../components/ProviderForm'
+import ProviderLimitBars from '../components/ProviderLimitBars'
 
 // Экран «Модели и провайдеры»: CRUD провайдеров и моделей с хранением в БД.
 // Изменения применяются сразу — реестр перезагружается после каждой мутации.
 export default function ModelsPage({ refreshTick }: { refreshTick: number }) {
   const [providers, setProviders] = useState<ManagedProvider[]>([])
+  const [providerLimits, setProviderLimits] = useState<ProviderLimitUsage[]>([])
   const [proxyConfig, setProxyConfig] = useState<ProxyConfig | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [creatingProvider, setCreatingProvider] = useState(false)
@@ -27,6 +35,10 @@ export default function ModelsPage({ refreshTick }: { refreshTick: number }) {
       .config()
       .then(setProxyConfig)
       .catch(() => setProxyConfig(null))
+    api
+      .providerLimitUsage()
+      .then(setProviderLimits)
+      .catch(() => setProviderLimits([]))
   }, [])
 
   useEffect(reload, [refreshTick, reload])
@@ -132,6 +144,11 @@ export default function ModelsPage({ refreshTick }: { refreshTick: number }) {
                     </button>
                   </span>
                 </h2>
+                {providerLimits
+                  .filter((limitUsage) => limitUsage.providerName === provider.name)
+                  .map((limitUsage) => (
+                    <ProviderLimitBars key={limitUsage.providerName} usage={limitUsage} />
+                  ))}
                 {provider.models.length === 0 ? (
                   <p className="muted">Моделей нет.</p>
                 ) : (

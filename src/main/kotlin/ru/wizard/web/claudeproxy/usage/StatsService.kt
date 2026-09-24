@@ -66,4 +66,29 @@ interface StatsService {
         toMilliseconds: Long?,
         clientKey: String?,
     ): List<TimelinePoint>
+
+    /** Выработка информационных лимитов провайдеров (только заданные категории). */
+    data class ModelTokens(val modelName: String, val tokens: Long)
+
+    data class LimitPeriodUsage(
+        val limitTokens: Long,
+        val spentTokens: Long,
+        val fromMilliseconds: Long,
+        val toMilliseconds: Long,
+        /** Разбивка выработки по моделям провайдера (для графиков к лимиту). */
+        val modelTokens: List<ModelTokens>,
+    )
+
+    data class ProviderLimitUsage(
+        val providerName: String,
+        /** Текущее 5-часовое окно провайдера; null — лимит не задан. */
+        val window: LimitPeriodUsage?,
+        /** Последние 7 дней; null — лимит не задан. */
+        val week: LimitPeriodUsage?,
+        /** Последние 30 дней; null — лимит не задан. */
+        val month: LimitPeriodUsage?,
+    )
+
+    /** Только провайдеры, у которых задан хотя бы один лимит. */
+    suspend fun providerLimitUsage(): List<ProviderLimitUsage>
 }

@@ -42,6 +42,10 @@ class ProxyProperties(
         var baseUrl: String = "",
         var apiKey: String = "",
         var extraHeaders: Map<String, String> = emptyMap(),
+        /** Информационные лимиты токенов (null = не задан); только для дашбордов. */
+        var limitWindowTokens: Long? = null,
+        var limitWeekTokens: Long? = null,
+        var limitMonthTokens: Long? = null,
         var models: List<ModelMapping> = emptyList(),
     )
 

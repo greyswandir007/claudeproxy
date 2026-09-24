@@ -67,6 +67,11 @@ class StatsController(
     ): List<StatsService.TimelinePoint> =
         statsService.timeline(bucket, fromMilliseconds, toMilliseconds, clientKey)
 
+    /** Выработка информационных лимитов провайдеров (заданные категории). */
+    @GetMapping("/api/provider-limits")
+    suspend fun providerLimits(): List<StatsService.ProviderLimitUsage> =
+        statsService.providerLimitUsage()
+
     /** Провайдеры и модели из реестра (read-only, без ключей провайдеров). */
     @GetMapping("/api/config")
     fun configuration(): Map<String, Any?> {

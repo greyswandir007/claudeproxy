@@ -16,6 +16,7 @@ import java.time.ZoneId
 class JdbcStatsService(
     private val databaseProvider: DatabaseProvider,
     private val jdbcTemplate: JdbcTemplate,
+    private val windowService: ru.wizard.web.claudeproxy.usage.WindowService,
 ) : StatsService {
 
     override suspend fun summary(range: String, clientKey: String?): StatsService.RangeSummary =
@@ -25,7 +26,7 @@ class JdbcStatsService(
                 range = range,
                 fromMilliseconds = bounds.first,
                 toMilliseconds = bounds.second,
-                totals = totals(bounds.first, bounds.second, clientKey),
+                totals = totalsBetween(bounds.first, bounds.second, clientKey),
                 window = if (range == RANGE_WINDOW) activeWindow(clientKey) else null,
             )
         }
@@ -123,6 +124,89 @@ class JdbcStatsService(
             )
         }
 
+    override suspend fun providerLimitUsage(): List<StatsService.ProviderLimitUsage> =
+        databaseProvider.execute { providerLimitUsageBlocking() }
+
+    private data class ProviderLimitsRow(
+        val name: String,
+        val window: Long?,
+        val week: Long?,
+        val month: Long?,
+    )
+
+    private fun providerLimitUsageBlocking(): List<StatsService.ProviderLimitUsage> {
+        val limitRows = ArrayList<ProviderLimitsRow>()
+        jdbcTemplate.query(
+            """SELECT name, limit_window_tokens, limit_week_tokens, limit_month_tokens
+               FROM provider ORDER BY created_at, id""",
+        ) { resultSet ->
+            val window = resultSet.getLong(2).takeIf { !resultSet.wasNull() }
+            val week = resultSet.getLong(3).takeIf { !resultSet.wasNull() }
+            val month = resultSet.getLong(4).takeIf { !resultSet.wasNull() }
+            if (window != null || week != null || month != null) {
+                limitRows.add(ProviderLimitsRow(resultSet.getString(1), window, week, month))
+            }
+        }
+        val now = System.currentTimeMillis()
+        return limitRows.map { limitsRow ->
+            val windowUsage = limitsRow.window?.let { limit ->
+                val bounds = windowService.currentProviderWindow(limitsRow.name)
+                val from = bounds?.startedAtMilliseconds ?: now
+                StatsService.LimitPeriodUsage(
+                    limitTokens = limit,
+                    spentTokens = totalsBetween(from, now, null, limitsRow.name).totalTokens(),
+                    fromMilliseconds = from,
+                    toMilliseconds = bounds?.endsAtMilliseconds ?: now,
+                    modelTokens = modelTokensFor(limitsRow.name, from, now),
+                )
+            }
+            val weekUsage = limitsRow.week?.let { limit ->
+                val from = now - 7 * 86_400_000L
+                StatsService.LimitPeriodUsage(
+                    limitTokens = limit,
+                    spentTokens = totalsBetween(from, now, null, limitsRow.name).totalTokens(),
+                    fromMilliseconds = from,
+                    toMilliseconds = now,
+                    modelTokens = modelTokensFor(limitsRow.name, from, now),
+                )
+            }
+            val monthUsage = limitsRow.month?.let { limit ->
+                val from = now - 30 * 86_400_000L
+                StatsService.LimitPeriodUsage(
+                    limitTokens = limit,
+                    spentTokens = totalsBetween(from, now, null, limitsRow.name).totalTokens(),
+                    fromMilliseconds = from,
+                    toMilliseconds = now,
+                    modelTokens = modelTokensFor(limitsRow.name, from, now),
+                )
+            }
+            StatsService.ProviderLimitUsage(limitsRow.name, windowUsage, weekUsage, monthUsage)
+        }
+    }
+
+    private fun StatsService.UsageTotals.totalTokens(): Long =
+        inputTokens + outputTokens + cacheCreationTokens + cacheReadTokens
+
+    /** Токены по моделям провайдера за период (убывание). */
+    private fun modelTokensFor(providerName: String, fromMilliseconds: Long, toMilliseconds: Long): List<StatsService.ModelTokens> =
+        jdbcTemplate.query(
+            """SELECT model,
+                      COALESCE(SUM(input_tokens + output_tokens + cache_creation_tokens + cache_read_tokens), 0)
+               FROM usage_event
+               WHERE ts >= ? AND ts <= ? AND provider = ?
+               GROUP BY model
+               ORDER BY 2 DESC""",
+            { resultSet, _ ->
+                StatsService.ModelTokens(
+                    modelName = resultSet.getString(1),
+                    tokens = resultSet.getLong(2),
+                )
+            },
+            fromMilliseconds,
+            toMilliseconds,
+            providerName,
+        )
+
     private fun resolveBounds(range: String, clientKey: String?): Pair<Long, Long> {
         val now = System.currentTimeMillis()
         return when (range) {
@@ -171,17 +255,33 @@ class JdbcStatsService(
         )
         if (windows.isEmpty()) return null
         val window = windows.first()
-        return window.copy(totals = totals(window.startedAtMilliseconds, window.endsAtMilliseconds, clientKey))
+        return window.copy(
+            totals = totalsBetween(window.startedAtMilliseconds, window.endsAtMilliseconds, clientKey),
+        )
     }
 
-    private fun totals(fromMilliseconds: Long, toMilliseconds: Long, clientKey: String?): StatsService.UsageTotals {
-        val keyCondition = if (clientKey != null) " AND client_key = ?" else ""
+    private fun totalsBetween(
+        fromMilliseconds: Long,
+        toMilliseconds: Long,
+        clientKey: String?,
+        providerName: String? = null,
+    ): StatsService.UsageTotals {
+        val conditions = buildString {
+            append("ts >= ? AND ts <= ?")
+            if (clientKey != null) append(" AND client_key = ?")
+            if (providerName != null) append(" AND provider = ?")
+        }
+        val arguments = ArrayList<Any>()
+        arguments.add(fromMilliseconds)
+        arguments.add(toMilliseconds)
+        clientKey?.let { arguments.add(it) }
+        providerName?.let { arguments.add(it) }
         return jdbcTemplate.queryForObject(
             """SELECT COUNT(*),
                       COALESCE(SUM(input_tokens), 0), COALESCE(SUM(output_tokens), 0),
                       COALESCE(SUM(cache_creation_tokens), 0), COALESCE(SUM(cache_read_tokens), 0)
                FROM usage_event
-               WHERE ts >= ? AND ts <= ?$keyCondition""",
+               WHERE $conditions""",
             { resultSet, _ ->
                 StatsService.UsageTotals(
                     requests = resultSet.getLong(1),
@@ -191,7 +291,7 @@ class JdbcStatsService(
                     cacheReadTokens = resultSet.getLong(5),
                 )
             },
-            *queryArguments(fromMilliseconds, toMilliseconds, clientKey),
+            *arguments.toTypedArray(),
         )!!
     }
 

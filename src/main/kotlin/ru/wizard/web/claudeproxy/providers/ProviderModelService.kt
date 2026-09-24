@@ -15,6 +15,9 @@ interface ProviderModelService {
         val apiKeyPreview: String,
         val extraHeaders: Map<String, String>,
         val exposed: Boolean,
+        val limitWindowTokens: Long?,
+        val limitWeekTokens: Long?,
+        val limitMonthTokens: Long?,
         val models: List<ModelView>,
         val createdAt: Long,
         val updatedAt: Long,
@@ -39,6 +42,11 @@ interface ProviderModelService {
         val apiKey: String?,
         val extraHeaders: Map<String, String>?,
         val exposed: Boolean?,
+        /** Информационные лимиты токенов (null = не задан); при обновлении
+         *  перезаписываются все три — UI присылает явные значения. */
+        val limitWindowTokens: Long?,
+        val limitWeekTokens: Long?,
+        val limitMonthTokens: Long?,
     )
 
     data class ModelRequest(

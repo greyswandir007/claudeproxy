@@ -127,6 +127,9 @@ class ProvidersController(
             apiKey = node.path("apiKey").takeIf { it.isTextual && it.asText().isNotEmpty() }?.asText(),
             extraHeaders = node.path("extraHeaders").takeIf { it.isObject }?.let(::toStringMap),
             exposed = node.path("exposed").takeIf { it.isBoolean }?.asBoolean(),
+            limitWindowTokens = optionalLimit(node, "limitWindowTokens"),
+            limitWeekTokens = optionalLimit(node, "limitWeekTokens"),
+            limitMonthTokens = optionalLimit(node, "limitMonthTokens"),
         )
     }
 
@@ -145,6 +148,10 @@ class ProvidersController(
         runCatching { objectMapper.readTree(requestBody) }.getOrElse {
             throw ApiError(HttpStatus.BAD_REQUEST, "invalid_request_error", "Некорректное тело запроса")
         }
+
+    /** Лимит из тела запроса: число > 0 — задан, иначе null (не задан/сброшен). */
+    private fun optionalLimit(node: JsonNode, field: String): Long? =
+        node.path(field).takeIf { it.isNumber && it.asLong() > 0 }?.asLong()
 
     private fun toStringMap(node: JsonNode): Map<String, String> {
         val result = HashMap<String, String>()

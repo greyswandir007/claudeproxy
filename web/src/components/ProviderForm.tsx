@@ -25,6 +25,15 @@ export default function ProviderForm({
   const [extraHeaderRows, setExtraHeaderRows] = useState(
     Object.entries(provider?.extraHeaders ?? {}).map(([key, value]) => ({ key, value })),
   )
+  const [limitWindowTokens, setLimitWindowTokens] = useState(
+    provider?.limitWindowTokens != null ? String(provider.limitWindowTokens) : '',
+  )
+  const [limitWeekTokens, setLimitWeekTokens] = useState(
+    provider?.limitWeekTokens != null ? String(provider.limitWeekTokens) : '',
+  )
+  const [limitMonthTokens, setLimitMonthTokens] = useState(
+    provider?.limitMonthTokens != null ? String(provider.limitMonthTokens) : '',
+  )
   const [showExtended, setShowExtended] = useState(isEditMode)
 
   const [discoveredModels, setDiscoveredModels] = useState<string[]>([])
@@ -77,6 +86,12 @@ export default function ProviderForm({
       Object.fromEntries(discoveredModels.map((upstream) => [upstream, true])),
     )
 
+  /** Пустое или неположительное значение — лимит не задан (null). */
+  const positiveLimitOrNull = (value: string): number | null => {
+    const parsed = Number(value)
+    return Number.isFinite(parsed) && parsed > 0 ? Math.round(parsed) : null
+  }
+
   const clearDiscoveredSelection = () =>
     setSelectedDiscovered(
       Object.fromEntries(discoveredModels.map((upstream) => [upstream, false])),
@@ -96,6 +111,9 @@ export default function ProviderForm({
       baseUrl: baseUrl.trim(),
       apiKey: apiKey.trim().length > 0 ? apiKey.trim() : undefined,
       extraHeaders,
+      limitWindowTokens: positiveLimitOrNull(limitWindowTokens),
+      limitWeekTokens: positiveLimitOrNull(limitWeekTokens),
+      limitMonthTokens: positiveLimitOrNull(limitMonthTokens),
     }
     const result = isEditMode
       ? api.updateProvider(provider.id, request)
@@ -184,11 +202,49 @@ export default function ProviderForm({
         </label>
       </div>
       {showExtended ? (
-        <KeyValueRows
-          title="Расширенные настройки — extra-заголовки"
-          rows={extraHeaderRows}
-          onChange={setExtraHeaderRows}
-        />
+        <>
+          <div className="form-grid">
+            <label>
+              Расширенные: лимит токенов — 5 часов
+              <input
+                type="number"
+                min={1}
+                value={limitWindowTokens}
+                placeholder="не задан"
+                onChange={(event) => setLimitWindowTokens(event.target.value)}
+              />
+            </label>
+            <label>
+              Лимит токенов — неделя (7 дней)
+              <input
+                type="number"
+                min={1}
+                value={limitWeekTokens}
+                placeholder="не задан"
+                onChange={(event) => setLimitWeekTokens(event.target.value)}
+              />
+            </label>
+            <label>
+              Лимит токенов — месяц (30 дней)
+              <input
+                type="number"
+                min={1}
+                value={limitMonthTokens}
+                placeholder="не задан"
+                onChange={(event) => setLimitMonthTokens(event.target.value)}
+              />
+            </label>
+          </div>
+          <p className="muted">
+            Лимиты информационные — видны на экране «Модели и провайдеры» как выработка;
+            можно задать один или несколько, пустое поле = не задан.
+          </p>
+          <KeyValueRows
+            title="Расширенные настройки — extra-заголовки"
+            rows={extraHeaderRows}
+            onChange={setExtraHeaderRows}
+          />
+        </>
       ) : (
         <button type="button" className="button button-small" onClick={() => setShowExtended(true)}>
           Расширенные настройки…

@@ -30,6 +30,7 @@ class AsyncUsageRecorder(
             try {
                 databaseProvider.execute {
                     windowService.ensureWindow(usageEvent.clientKey, usageEvent.ts)
+                    windowService.ensureProviderWindow(usageEvent.provider, usageEvent.ts)
                     jdbcTemplate.update(
                         """INSERT INTO usage_event
                            (ts, client_key, provider, model, upstream_model, stream,

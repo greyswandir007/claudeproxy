@@ -451,7 +451,7 @@ class ProxyIntegrationTest {
     fun `миграции применены и зафиксированы`() {
         val appliedMigrations =
             jdbcTemplate.queryForList("SELECT version FROM schema_migration ORDER BY version", Int::class.java)
-        assertTrue(appliedMigrations.containsAll(listOf(1, 2)))
+        assertTrue(appliedMigrations.containsAll(listOf(1, 2, 3)))
         // V2: колонки приоритета и выдачи на месте
         jdbcTemplate.queryForObject("SELECT priority, exposed FROM model LIMIT 1") { resultSet, _ ->
             // достаточно, что запрос не падает
@@ -689,6 +689,77 @@ class ProxyIntegrationTest {
             .jsonPath("$.error.message").isNotEmpty
             .jsonPath("$.error.type").isEqualTo("invalid_request_error")
             .jsonPath("$.type").doesNotExist()
+    }
+
+    @Test
+    fun `лимиты провайдера и их выработка`() {
+        // провайдер с лимитами: окно 1000, месяц 100000; неделя не задана
+        val createdProvider = webTestClient.post().uri("/api/providers")
+            .contentType(MediaType.APPLICATION_JSON)
+            .bodyValue(
+                """{"name":"limits-provider","type":"openai",
+                    "baseUrl":"http://127.0.0.1:${upstreamPort()}","apiKey":"limits-secret",
+                    "limitWindowTokens":1000,"limitMonthTokens":100000}""",
+            )
+            .exchange().expectStatus().isCreated
+            .expectBody(String::class.java).returnResult().responseBody!!
+        val providerNode = objectMapper.readTree(createdProvider)
+        val providerId = providerNode.path("id").asLong()
+        assertEquals(1000L, providerNode.path("limitWindowTokens").asLong())
+        assertTrue(providerNode.path("limitWeekTokens").isNull)
+
+        webTestClient.post().uri("/api/providers/$providerId/models")
+            .contentType(MediaType.APPLICATION_JSON)
+            .bodyValue(
+                """{"publicName":"limits-model","upstreamName":"openai-model",
+                    "reasoning":"map","maxCompletionParam":false,"priority":100}""",
+            )
+            .exchange().expectStatus().isCreated
+
+        // один запрос: 100 in + 50 out + 7 cache_read = 157 токенов
+        webTestClient.post().uri("/v1/messages")
+            .header("x-api-key", SEED_API_KEY)
+            .contentType(MediaType.APPLICATION_JSON)
+            .bodyValue(CLAUDE_REQUEST_WITH_TOOLS.replace("fake-openai-model", "limits-model"))
+            .exchange().expectStatus().isOk
+
+        val limitsBody = webTestClient.get().uri("/api/provider-limits")
+            .exchange().expectStatus().isOk
+            .expectBody(String::class.java).returnResult().responseBody!!
+        val usage = objectMapper.readTree(limitsBody)
+            .firstOrNull { it.path("providerName").asText() == "limits-provider" }!!
+        assertEquals(1000L, usage.path("window").path("limitTokens").asLong())
+        assertEquals(157L, usage.path("window").path("spentTokens").asLong())
+        // разбивка по моделям — для графиков относительно лимита
+        assertEquals("limits-model", usage.path("window").path("modelTokens").get(0).path("modelName").asText())
+        assertEquals(157L, usage.path("window").path("modelTokens").get(0).path("tokens").asLong())
+        assertTrue(usage.path("week").isNull)
+        assertEquals(100000L, usage.path("month").path("limitTokens").asLong())
+        assertEquals(157L, usage.path("month").path("spentTokens").asLong())
+
+        // провайдеры без лимитов в выработку не попадают
+        assertTrue(
+            objectMapper.readTree(limitsBody)
+                .none { it.path("providerName").asText() == "fake" },
+        )
+
+        // сброс лимитов через обновление (null)
+        webTestClient.put().uri("/api/providers/$providerId")
+            .contentType(MediaType.APPLICATION_JSON)
+            .bodyValue(
+                """{"name":"limits-provider","type":"openai",
+                    "baseUrl":"http://127.0.0.1:${upstreamPort()}"}""",
+            )
+            .exchange().expectStatus().isOk
+        val limitsAfterReset = webTestClient.get().uri("/api/provider-limits")
+            .exchange().expectStatus().isOk
+            .expectBody(String::class.java).returnResult().responseBody!!
+        assertTrue(
+            objectMapper.readTree(limitsAfterReset)
+                .none { it.path("providerName").asText() == "limits-provider" },
+        )
+
+        webTestClient.delete().uri("/api/providers/$providerId").exchange().expectStatus().isNoContent
     }
 
     private fun asLong(value: Any?): Long = (value as Number).toLong()

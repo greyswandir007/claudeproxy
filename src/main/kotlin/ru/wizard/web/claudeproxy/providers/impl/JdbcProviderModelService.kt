@@ -36,13 +36,18 @@ class JdbcProviderModelService(
         for (yamlProvider in proxyProperties.providers) {
             val providerId = findProviderIdByName(yamlProvider.name) ?: run {
                 jdbcTemplate.update(
-                    """INSERT INTO provider (name, type, base_url, api_key, extra_headers, created_at, updated_at)
-                       VALUES (?,?,?,?,?,?,?)""",
+                    """INSERT INTO provider
+                       (name, type, base_url, api_key, extra_headers,
+                        limit_window_tokens, limit_week_tokens, limit_month_tokens, created_at, updated_at)
+                       VALUES (?,?,?,?,?,?,?,?,?,?)""",
                     yamlProvider.name,
                     yamlProvider.type,
                     yamlProvider.baseUrl,
                     yamlProvider.apiKey,
                     objectMapper.writeValueAsString(yamlProvider.extraHeaders),
+                    yamlProvider.limitWindowTokens,
+                    yamlProvider.limitWeekTokens,
+                    yamlProvider.limitMonthTokens,
                     System.currentTimeMillis(),
                     System.currentTimeMillis(),
                 )
@@ -83,14 +88,19 @@ class JdbcProviderModelService(
             requireUniqueProviderName(request.name)
             val now = System.currentTimeMillis()
             jdbcTemplate.update(
-                """INSERT INTO provider (name, type, base_url, api_key, extra_headers, exposed, created_at, updated_at)
-                   VALUES (?,?,?,?,?,?,?,?)""",
+                """INSERT INTO provider
+                   (name, type, base_url, api_key, extra_headers, exposed,
+                    limit_window_tokens, limit_week_tokens, limit_month_tokens, created_at, updated_at)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
                 request.name,
                 request.type,
                 request.baseUrl,
                 request.apiKey ?: "",
                 objectMapper.writeValueAsString(request.extraHeaders ?: emptyMap<String, String>()),
                 if (request.exposed ?: true) 1 else 0,
+                request.limitWindowTokens,
+                request.limitWeekTokens,
+                request.limitMonthTokens,
                 now,
                 now,
             )
@@ -116,25 +126,13 @@ class JdbcProviderModelService(
                 throw conflict("Провайдер с именем '${request.name}' уже существует")
             }
             val updateApiKey = !request.apiKey.isNullOrBlank()
-            val arguments = ArrayList<Any>()
-            arguments.add(request.name)
-            arguments.add(request.type)
-            arguments.add(request.baseUrl)
-            arguments.add(objectMapper.writeValueAsString(request.extraHeaders ?: emptyMap<String, String>()))
-            if (request.exposed != null) {
-                arguments.add(if (request.exposed) 1 else 0)
-            }
-            if (updateApiKey) {
-                arguments.add(request.apiKey!!)
-            }
-            arguments.add(System.currentTimeMillis())
-            arguments.add(id)
             jdbcTemplate.update(
-                "UPDATE provider SET name = ?, type = ?, base_url = ?, extra_headers = ?" +
+                """UPDATE provider SET name = ?, type = ?, base_url = ?, extra_headers = ?,
+                   limit_window_tokens = ?, limit_week_tokens = ?, limit_month_tokens = ?""" +
                     (if (request.exposed != null) ", exposed = ?" else "") +
                     (if (updateApiKey) ", api_key = ?" else "") +
                     ", updated_at = ? WHERE id = ?",
-                *arguments.toTypedArray(),
+                *buildUpdateProviderArguments(request, id, updateApiKey).toTypedArray(),
             )
             loadProvider(id)
         }
@@ -297,10 +295,37 @@ class JdbcProviderModelService(
         return providerIds.map { loadProvider(it) }
     }
 
+    /** Аргументы UPDATE provider в порядке SET-плейсхолдеров (лимиты перезаписываются все). */
+    private fun buildUpdateProviderArguments(
+        request: ProviderModelService.ProviderRequest,
+        id: Long,
+        updateApiKey: Boolean,
+    ): List<Any?> {
+        val arguments = ArrayList<Any?>()
+        arguments.add(request.name)
+        arguments.add(request.type)
+        arguments.add(request.baseUrl)
+        arguments.add(objectMapper.writeValueAsString(request.extraHeaders ?: emptyMap<String, String>()))
+        arguments.add(request.limitWindowTokens)
+        arguments.add(request.limitWeekTokens)
+        arguments.add(request.limitMonthTokens)
+        if (request.exposed != null) {
+            arguments.add(if (request.exposed) 1 else 0)
+        }
+        if (updateApiKey) {
+            arguments.add(request.apiKey!!)
+        }
+        arguments.add(System.currentTimeMillis())
+        arguments.add(id)
+        return arguments
+    }
+
     private fun loadProvider(id: Long): ProviderModelService.ProviderView {
-        val providerRows = ArrayList<Array<Any>>()
+        val providerRows = ArrayList<Array<Any?>>()
         jdbcTemplate.query(
-            """SELECT name, type, base_url, api_key, extra_headers, exposed, created_at, updated_at
+            """SELECT name, type, base_url, api_key, extra_headers, exposed,
+                      limit_window_tokens, limit_week_tokens, limit_month_tokens,
+                      created_at, updated_at
                FROM provider WHERE id = ?""",
             { resultSet ->
                 providerRows.add(
@@ -311,8 +336,11 @@ class JdbcProviderModelService(
                         resultSet.getString(4) ?: "",
                         resultSet.getString(5) ?: "{}",
                         resultSet.getInt(6) == 1,
-                        resultSet.getLong(7),
-                        resultSet.getLong(8),
+                        resultSet.getLong(7).takeIf { !resultSet.wasNull() },
+                        resultSet.getLong(8).takeIf { !resultSet.wasNull() },
+                        resultSet.getLong(9).takeIf { !resultSet.wasNull() },
+                        resultSet.getLong(10),
+                        resultSet.getLong(11),
                     ),
                 )
             },
@@ -349,9 +377,12 @@ class JdbcProviderModelService(
             apiKeyPreview = apiKeyPreview(row[3] as String),
             extraHeaders = parseExtraHeaders(row[4] as String),
             exposed = row[5] as Boolean,
+            limitWindowTokens = row[6] as Long?,
+            limitWeekTokens = row[7] as Long?,
+            limitMonthTokens = row[8] as Long?,
             models = models,
-            createdAt = row[6] as Long,
-            updatedAt = row[7] as Long,
+            createdAt = row[9] as Long,
+            updatedAt = row[10] as Long,
         )
     }
 

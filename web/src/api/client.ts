@@ -129,6 +129,9 @@ export interface ManagedProvider {
   apiKeyPreview: string
   extraHeaders: Record<string, string>
   exposed: boolean
+  limitWindowTokens: number | null
+  limitWeekTokens: number | null
+  limitMonthTokens: number | null
   models: ManagedModel[]
   createdAt: number
   updatedAt: number
@@ -141,6 +144,29 @@ export interface ProviderRequest {
   apiKey?: string
   extraHeaders?: Record<string, string>
   exposed?: boolean
+  limitWindowTokens?: number | null
+  limitWeekTokens?: number | null
+  limitMonthTokens?: number | null
+}
+
+export interface ModelTokens {
+  modelName: string
+  tokens: number
+}
+
+export interface LimitPeriodUsage {
+  limitTokens: number
+  spentTokens: number
+  fromMilliseconds: number
+  toMilliseconds: number
+  modelTokens: ModelTokens[]
+}
+
+export interface ProviderLimitUsage {
+  providerName: string
+  window: LimitPeriodUsage | null
+  week: LimitPeriodUsage | null
+  month: LimitPeriodUsage | null
 }
 
 export interface ModelRequest {
@@ -186,4 +212,5 @@ export const api = {
     putJson<{ exposed: boolean }>(`/api/providers/${id}/exposure`, { exposed }),
   setModelExposed: (id: number, exposed: boolean) =>
     putJson<{ exposed: boolean }>(`/api/models/${id}/exposure`, { exposed }),
+  providerLimitUsage: () => getJson<ProviderLimitUsage[]>('/api/provider-limits'),
 }
