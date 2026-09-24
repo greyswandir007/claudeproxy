@@ -76,7 +76,7 @@ class JdbcKeyManagementService(
                 Long::class.java,
                 trimmedName,
             )!!
-            logger.info { "Создан клиентский ключ '$trimmedName'" }
+            logger.info { "Created client key '$trimmedName'" }
             KeyManagementService.CreatedKey(
                 clientKey = KeyManagementService.ClientKey(
                     id = identifier,

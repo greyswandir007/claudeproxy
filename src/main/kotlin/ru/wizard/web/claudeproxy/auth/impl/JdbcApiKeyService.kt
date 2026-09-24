@@ -32,7 +32,7 @@ class JdbcApiKeyService(
     override fun seed() {
         for (seedKey in proxyProperties.apiKeys) {
             if (seedKey.name.isBlank() || seedKey.key.isBlank()) {
-                logger.warn { "Пропущен сид-ключ с пустым name/key" }
+                logger.warn { "Skipped seed key with blank name/key" }
                 continue
             }
             val keyHash = ApiKeyService.sha256Hex(seedKey.key)
@@ -50,12 +50,12 @@ class JdbcApiKeyService(
                         seedKey.key.take(KEY_PREFIX_LENGTH),
                         System.currentTimeMillis(),
                     )
-                    logger.info { "Засеян клиентский ключ '${seedKey.name}'" }
+                    logger.info { "Seeded client key '${seedKey.name}'" }
                 }
 
                 existingHashes.first() != keyHash ->
                     logger.warn {
-                        "Сид-ключ '${seedKey.name}' отличается от ключа в БД — оставлен ключ из БД"
+                        "Seed key '${seedKey.name}' differs from the stored one - keeping the stored key"
                     }
             }
         }

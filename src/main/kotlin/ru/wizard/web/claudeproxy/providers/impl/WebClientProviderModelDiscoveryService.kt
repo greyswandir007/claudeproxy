@@ -64,7 +64,7 @@ class WebClientProviderModelDiscoveryService(
             .bodyToMono(String::class.java)
             .awaitSingle()
         val models = parseModelIdentifiers(responseBody)
-        logger.info { "Дискавери ${request.type} ${request.baseUrl}: найдено моделей ${models.size}" }
+        logger.info { "Discovery ${request.type} ${request.baseUrl}: found ${models.size} models" }
         return models
     }
 

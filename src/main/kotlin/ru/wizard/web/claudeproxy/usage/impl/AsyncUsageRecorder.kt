@@ -53,7 +53,7 @@ class AsyncUsageRecorder(
                 }
             } catch (exception: Exception) {
                 logger.error(exception) {
-                    "Не удалось записать usage_event (model=${usageEvent.model})"
+                    "Failed to record usage_event (model=${usageEvent.model})"
                 }
             }
         }

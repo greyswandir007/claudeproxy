@@ -39,7 +39,7 @@ class JdbcUsageRetentionService(
                 System.currentTimeMillis() - retentionDays * 86_400_000L,
             )
             if (deletedEvents > 0) {
-                logger.info { "Retention: удалено устаревших usage_event — $deletedEvents" }
+                logger.info { "Retention: deleted $deletedEvents outdated usage_event rows" }
             }
         }
     }

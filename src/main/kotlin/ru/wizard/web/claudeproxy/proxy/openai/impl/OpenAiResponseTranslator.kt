@@ -98,7 +98,7 @@ class OpenAiResponseTranslator(private val objectMapper: ObjectMapper) {
         val input = runCatching { objectMapper.readTree(function.path("arguments").asText("")) }.getOrNull()
         if (input == null || !input.isObject) {
             logger.warn {
-                "Не удалось разобрать arguments инструмента '${function.path("name").asText()}' — input пуст"
+                "Failed to parse arguments of tool '${function.path("name").asText()}' - input is empty"
             }
         }
         val toolUseBlock = objectMapper.createObjectNode()

@@ -87,9 +87,9 @@ class DynamicModelRegistry(
         }
         snapshot = Snapshot(routesByName, exposedNames)
         logger.info {
-            "Реестр моделей загружен: ${routesByName.size} моделей " +
-                "(${routesByName.values.sumOf { it.size }} маршрутов, " +
-                "в выдаче ${exposedNames.size}) от ${providersById.size} провайдеров"
+            "Model registry loaded: ${routesByName.size} models " +
+                "(${routesByName.values.sumOf { it.size }} routes, " +
+                "${exposedNames.size} exposed) from ${providersById.size} providers"
         }
     }
 

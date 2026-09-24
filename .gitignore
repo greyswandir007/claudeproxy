@@ -63,6 +63,9 @@ yarn-error.log
 .env
 .env.*
 
+### Локальные настройки Claude Code ###
+.claude/
+
 ### OS ###
 .DS_Store
 Thumbs.db

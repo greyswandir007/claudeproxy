@@ -121,8 +121,8 @@ class WebClientAnthropicHandler(
                     throw error
                 }
                 logger.warn(error) {
-                    "Маршрут '${route.provider.name}/${route.mapping.upstreamName}' не отвечает " +
-                        "(${shortError(error)}) — переключаюсь на следующий"
+                    "Route '${route.provider.name}/${route.mapping.upstreamName}' failed " +
+                        "(${shortError(error)}) - switching to next route"
                 }
             }
         }
@@ -191,12 +191,12 @@ class WebClientAnthropicHandler(
                     index < routes.lastIndex
                 if (canFallback) {
                     logger.warn(error) {
-                        "Маршрут '${route.provider.name}/${route.mapping.upstreamName}' упал до первого " +
-                            "события (${shortError(error)}) — переключаюсь на следующий"
+                        "Route '${route.provider.name}/${route.mapping.upstreamName}' failed before " +
+                            "first event (${shortError(error)}) - switching to next route"
                     }
                     attemptStream(exchange, routes, index + 1, requestRoot, upstreamPath, recordUsage, clientKey)
                 } else {
-                    logger.error(error) { "Обрыв стрима от провайдера '${route.provider.name}'" }
+                    logger.error(error) { "Stream from provider '${route.provider.name}' aborted" }
                     Flux.just(
                         exchange.response.bufferFactory()
                             .wrap(serverSentEventErrorBytes(error.message)),

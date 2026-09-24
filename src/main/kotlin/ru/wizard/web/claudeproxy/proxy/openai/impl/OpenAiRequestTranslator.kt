@@ -86,7 +86,7 @@ class OpenAiRequestTranslator(private val objectMapper: ObjectMapper) {
                 }
 
                 "thinking" -> Unit // история рассуждений не ретранслируется
-                else -> logger.debug { "Блок '${block.path("type").asText()}' в assistant отброшен" }
+                else -> logger.debug { "Assistant block '${block.path("type").asText()}' dropped" }
             }
         }
         if (textBuilder.isNotEmpty()) {
@@ -118,7 +118,7 @@ class OpenAiRequestTranslator(private val objectMapper: ObjectMapper) {
                 "image" -> translateImagePart(block)?.let { parts.add(it) }
 
                 else -> logger.debug {
-                    "Блок '${block.path("type").asText()}' в user отброшен (не переводится в OpenAI)"
+                    "User block '${block.path("type").asText()}' dropped (not translatable to OpenAI)"
                 }
             }
         }
@@ -172,7 +172,7 @@ class OpenAiRequestTranslator(private val objectMapper: ObjectMapper) {
 
             "url" -> source.path("url").asText()
             else -> {
-                logger.debug { "Источник изображения '${source.path("type").asText()}' отброшен" }
+                logger.debug { "Image source '${source.path("type").asText()}' dropped" }
                 return null
             }
         }
@@ -211,7 +211,7 @@ class OpenAiRequestTranslator(private val objectMapper: ObjectMapper) {
             target.set<JsonNode>("stop", stopSequences)
         }
         if (requestRoot.has("top_k")) {
-            logger.debug { "top_k не поддерживается OpenAI — отброшен" }
+            logger.debug { "top_k is not supported by OpenAI - dropped" }
         }
     }
 

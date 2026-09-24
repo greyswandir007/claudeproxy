@@ -52,7 +52,7 @@ class DatabaseMigrationRunner(
                     System.currentTimeMillis(),
                 )
             }
-            logger.info { "Применена миграция V${migration.version}__${migration.name}" }
+            logger.info { "Applied migration V${migration.version}__${migration.name}" }
         }
     }
 

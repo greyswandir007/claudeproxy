@@ -46,7 +46,7 @@ class JdbcProviderModelService(
                     System.currentTimeMillis(),
                     System.currentTimeMillis(),
                 )
-                logger.info { "Засеян провайдер '${yamlProvider.name}' из YAML" }
+                logger.info { "Seeded provider '${yamlProvider.name}' from YAML" }
                 findProviderIdByName(yamlProvider.name)!!
             }
             for (modelMapping in yamlProvider.models) {
@@ -148,7 +148,7 @@ class JdbcProviderModelService(
             val deletedModels = jdbcTemplate.update("DELETE FROM model WHERE provider_id = ?", id)
             val deletedProviders = jdbcTemplate.update("DELETE FROM provider WHERE id = ?", id)
             if (deletedProviders > 0) {
-                logger.info { "Удалён провайдер id=$id (моделей: $deletedModels)" }
+                logger.info { "Deleted provider id=$id (models: $deletedModels)" }
             }
             deletedProviders > 0
         }
