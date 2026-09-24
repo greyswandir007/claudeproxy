@@ -1,0 +1,65 @@
+# Пример конфигурации claudeproxy.
+# Скопируйте в config/application.yml и подставьте ключи через переменные окружения.
+# Реальный config/application.yml в git не попадает (.gitignore).
+
+server:
+  port: 8080
+
+claudeproxy:
+  # Длительность окна использования (часы) — по одному циклу на каждый клиентский ключ.
+  window-hours: 5
+  # Автоочистка старых событий статистики, в днях (0 = не чистить).
+  retention-days: 365
+
+  # Basic Auth для дашборда и /api — раскомментируйте для production.
+  # Включается, когда заданы оба поля; без них дашборд доступен только с localhost.
+  # dashboard:
+  #   auth:
+  #     username: admin
+  #     password: ${DASHBOARD_PASSWORD}
+
+  # Стартовые (сид) клиентские ключи — вносятся в БД при старте, если имени ещё нет.
+  # Основной способ заведения ключей — генерация на странице «Ключи» дашборда.
+  # Ключи провайдеров наружу не выходят.
+  api-keys:
+    - name: my-laptop
+      key: ${PROXY_KEY_LAPTOP}          # например cpk_xxxxxxxxxxxx
+    - name: work-desktop
+      key: ${PROXY_KEY_DESKTOP}
+
+  # Настраиваемый список поддерживаемых моделей.
+  # allow: [] — все public-модели всех провайдеров;
+  # иначе — только перечисленные (порядок = порядок в /v1/models).
+  models:
+    allow: []
+
+  providers:
+    # Провайдер, говорящий нативным протоколом Anthropic: прозрачный pass-through.
+    - name: anthropic-direct
+      type: anthropic
+      base-url: https://api.anthropic.com
+      api-key: ${ANTHROPIC_API_KEY}
+      models:
+        - public: claude-opus-5          # имя, которое видит клиент
+          upstream: claude-opus-5        # имя модели у провайдера
+        - public: claude-sonnet-5
+          upstream: claude-sonnet-5
+
+    # OpenAI-совместимый провайдер: полный перевод протокола Claude ↔ OpenAI
+    # (стриминг, tool calls, thinking → reasoning_effort).
+    - name: openrouter
+      type: openai
+      base-url: https://openrouter.ai/api/v1
+      api-key: ${OPENROUTER_API_KEY}
+      extra-headers:                     # опционально, пробрасываются вверх
+        HTTP-Referer: https://my.setup
+        X-Title: claudeproxy
+      models:
+        - public: gpt-5.2
+          upstream: openai/gpt-5.2
+          reasoning: map                 # map | off — переводить ли thinking
+          max-completion-param: false    # true => шлём max_completion_tokens (o-серия)
+        - public: deepseek-chat
+          upstream: deepseek/deepseek-chat
+          reasoning: map                 # DeepSeek: reasoning_content → thinking
+          max-completion-param: false
