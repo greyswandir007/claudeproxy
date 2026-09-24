@@ -366,8 +366,9 @@ CORS не нужен (раздаём с того же origin). Пагинаци�
 
 ```text
 claudeproxy/
-├── PLAN.md, README.md
+├── PLAN.md, README.md, CLAUDE.md
 ├── build.gradle.kts, settings.gradle.kts, gradle/
+├── scripts/                          # run-local / build-production (.bat для Windows, .sh для Linux)
 ├── config/
 │   └── application.example.yml        # реальный config/application.yml — в gitignore
 ├── data/                              # SQLite (gitignore)

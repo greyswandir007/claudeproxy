@@ -1,3 +1,5 @@
+import java.io.File
+
 plugins {
 	kotlin("jvm") version "2.3.21"
 	kotlin("plugin.spring") version "2.3.21"
@@ -43,15 +45,28 @@ tasks.withType<Test> {
 }
 
 // Дашборд: сборка (npm) и встраивание web/dist в jar как classpath:/static/.
+// npm определяется по PATH: без Node.js buildDashboard пропускается (onlyIf),
+// а jar просто не получает дашборд, если web/dist не собран.
+val isWindowsBuild = System.getProperty("os.name").lowercase().contains("windows")
+val npmAvailable = run {
+	val pathDirectories: List<String> =
+		System.getenv("PATH")?.split(File.pathSeparator) ?: emptyList()
+	val npmFileNames = if (isWindowsBuild) listOf("npm.cmd", "npm.exe") else listOf("npm")
+	pathDirectories.any { directory ->
+		npmFileNames.any { fileName -> File(directory, fileName).isFile }
+	}
+}
+
 val buildDashboard = tasks.register<Exec>("buildDashboard") {
 	workingDir = file("web")
 	commandLine(
-		if (System.getProperty("os.name").lowercase().contains("windows")) {
+		if (isWindowsBuild) {
 			listOf("cmd", "/c", "npm", "install", "&&", "npm", "run", "build")
 		} else {
 			listOf("sh", "-c", "npm install && npm run build")
 		},
 	)
+	onlyIf { npmAvailable }
 	inputs.dir("web/src")
 	inputs.files(
 		"web/package.json",
@@ -64,6 +79,7 @@ val buildDashboard = tasks.register<Exec>("buildDashboard") {
 }
 
 val copyDashboardIntoJar = tasks.register<Copy>("copyDashboardIntoJar") {
+	dependsOn(buildDashboard)
 	from("web/dist")
 	into(layout.buildDirectory.dir("resources/main/static"))
 	onlyIf { file("web/dist").exists() }

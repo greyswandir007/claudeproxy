@@ -73,8 +73,11 @@ Vite + Recharts**.
 2. **Запуск бэкенда** (порт 8080, слушает 127.0.0.1):
 
    ```bash
-   ./gradlew bootRun
+   scripts\run-local.bat        # Windows
+   ./scripts/run-local.sh       # Linux
    ```
+
+   (это `bootRun` + пересборка дашборда при наличии Node.js; можно и просто `./gradlew bootRun`)
 
 3. **Дашборд**:
 
@@ -87,7 +90,8 @@ Vite + Recharts**.
 4. **Production-сборка одной командой** (дашборд встраивается в jar):
 
    ```bash
-   ./gradlew buildDashboard bootJar
+   scripts\build-production.bat        # Windows
+   ./scripts/build-production.sh       # Linux
    java -jar build/libs/claudeproxy-0.0.1-SNAPSHOT.jar
    ```
 
