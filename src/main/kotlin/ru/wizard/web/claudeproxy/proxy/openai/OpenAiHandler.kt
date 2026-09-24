@@ -1,0 +1,29 @@
+package ru.wizard.web.claudeproxy.proxy.openai
+
+import com.fasterxml.jackson.databind.JsonNode
+import org.springframework.core.io.buffer.DataBuffer
+import org.springframework.http.ResponseEntity
+import org.springframework.web.server.ServerWebExchange
+import reactor.core.publisher.Flux
+import ru.wizard.web.claudeproxy.routing.ModelRegistry
+
+/**
+ * Обработка запроса Claude OpenAI-совместимым провайдером: полный перевод
+ * протокола (запрос → Chat Completions, ответ/SSE → формат Claude).
+ */
+interface OpenAiHandler {
+
+    suspend fun chatCompletion(
+        exchange: ServerWebExchange,
+        route: ModelRegistry.Route,
+        requestRoot: JsonNode,
+        recordUsage: Boolean,
+    ): ResponseEntity<Flux<DataBuffer>>
+
+    /** Подсчёт токенов: локальная оценка (~4 символа на токен), без похода к провайдеру. */
+    suspend fun countTokens(
+        exchange: ServerWebExchange,
+        route: ModelRegistry.Route,
+        requestRoot: JsonNode,
+    ): ResponseEntity<Flux<DataBuffer>>
+}

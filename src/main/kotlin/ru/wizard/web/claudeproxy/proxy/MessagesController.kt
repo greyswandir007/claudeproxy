@@ -13,6 +13,7 @@ import org.springframework.web.bind.annotation.RestController
 import org.springframework.web.server.ServerWebExchange
 import reactor.core.publisher.Flux
 import reactor.core.publisher.Mono
+import ru.wizard.web.claudeproxy.proxy.openai.OpenAiHandler
 import ru.wizard.web.claudeproxy.routing.ModelRegistry
 
 /**
@@ -23,6 +24,7 @@ class MessagesController(
     private val modelRegistry: ModelRegistry,
     private val objectMapper: ObjectMapper,
     private val anthropicHandler: AnthropicHandler,
+    private val openAiHandler: OpenAiHandler,
 ) {
 
     @PostMapping("/v1/messages", consumes = [MediaType.APPLICATION_JSON_VALUE])
@@ -67,8 +69,8 @@ class MessagesController(
         }
         val route = modelRegistry.find(model)
             ?: throw ApiError(HttpStatus.NOT_FOUND, "not_found_error", "model: $model not found")
-        when (route.provider.type) {
-            "anthropic" -> anthropicHandler.passThrough(
+        when {
+            route.provider.type == "anthropic" -> anthropicHandler.passThrough(
                 exchange,
                 route,
                 requestRoot,
@@ -76,10 +78,16 @@ class MessagesController(
                 recordUsage,
             )
 
+            route.provider.type == "openai" && recordUsage ->
+                openAiHandler.chatCompletion(exchange, route, requestRoot, recordUsage)
+
+            route.provider.type == "openai" ->
+                openAiHandler.countTokens(exchange, route, requestRoot)
+
             else -> throw ApiError(
                 HttpStatus.NOT_IMPLEMENTED,
                 "api_error",
-                "Провайдер типа '${route.provider.type}' будет поддержан в M2 (перевод протокола)",
+                "Провайдер типа '${route.provider.type}' не поддерживается (anthropic|openai)",
             )
         }
     }

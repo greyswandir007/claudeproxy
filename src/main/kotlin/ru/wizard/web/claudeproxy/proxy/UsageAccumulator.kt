@@ -24,4 +24,12 @@ class UsageAccumulator {
         usage.path("cache_read_input_tokens").takeIf { it.isNumber }
             ?.let { cacheReadTokens = it.asLong() }
     }
+
+    /** Явная установка значений (для usage-форматов других провайдеров). */
+    fun setValues(inputTokens: Long, outputTokens: Long, cacheCreationTokens: Long, cacheReadTokens: Long) {
+        this.inputTokens = inputTokens
+        this.outputTokens = outputTokens
+        this.cacheCreationTokens = cacheCreationTokens
+        this.cacheReadTokens = cacheReadTokens
+    }
 }
