@@ -214,6 +214,70 @@ export interface WindowBoundary {
   endsAtMilliseconds: number
 }
 
+export interface ChatMessage {
+  id: number
+  role: string
+  content: string
+  createdAt: number
+}
+
+export interface ChatState {
+  thread: { clientKey: string; title: string; updatedAt: number }
+  messages: ChatMessage[]
+}
+
+export const chatApi = {
+  state: (key: string) => getJson<ChatState>(`/api/chat/state?key=${encodeURIComponent(key)}`),
+  renameThread: (key: string, title: string) =>
+    putJson<{ title: string }>(
+      `/api/chat/thread?key=${encodeURIComponent(key)}`,
+      { title },
+    ),
+  clear: (key: string) => deleteRequest(`/api/chat/messages?key=${encodeURIComponent(key)}`),
+
+  /** Отправка со стримингом: onChunk получает каждую порцию текста ассистента. */
+  send: async (
+    key: string,
+    model: string,
+    content: string,
+    onChunk: (text: string) => void,
+    onDone: (stopReason: string) => void,
+    onError: (message: string) => void,
+  ): Promise<void> => {
+    const response = await fetch(
+      `/api/chat/send?key=${encodeURIComponent(key)}&model=${encodeURIComponent(model)}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content }),
+      },
+    )
+    if (!response.ok || !response.body) {
+      const errorText = await response.text().catch(() => '')
+      onError(`HTTP ${response.status} ${errorText.slice(0, 200)}`)
+      return
+    }
+    const reader = response.body.getReader()
+    const decoder = new TextDecoder()
+    let buffer = ''
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      buffer += decoder.decode(value, { stream: true })
+      let newlineIndex: number
+      while ((newlineIndex = buffer.indexOf('\n')) >= 0) {
+        const line = buffer.slice(0, newlineIndex).trim()
+        buffer = buffer.slice(newlineIndex + 1)
+        if (line.length === 0) continue
+        const event = JSON.parse(line)
+        if (event.type === 'text') onChunk(event.text as string)
+        else if (event.type === 'done') onDone(event.stop_reason as string)
+        else if (event.type === 'error') onError(event.message as string)
+      }
+    }
+  },
+}
+
 export interface ProviderLimitUsage {
   providerName: string
   window: LimitPeriodUsage | null

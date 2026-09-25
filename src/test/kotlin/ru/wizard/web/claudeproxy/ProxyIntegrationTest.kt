@@ -53,6 +53,8 @@ class ProxyIntegrationTest {
             .build()
         jdbcTemplate.update("DELETE FROM usage_event")
         jdbcTemplate.update("DELETE FROM usage_window")
+        jdbcTemplate.update("DELETE FROM chat_message")
+        jdbcTemplate.update("DELETE FROM chat_thread")
         jdbcTemplate.update("DELETE FROM api_key WHERE name <> 'test'")
     }
 
@@ -950,6 +952,63 @@ class ProxyIntegrationTest {
             .exchange().expectStatus().isOk
 
         webTestClient.delete().uri("/api/providers/$providerId").exchange().expectStatus().isNoContent
+    }
+
+    @Test
+    fun `веб-чат — стриминг, история и сброс`() {
+        // отправка: NDJSON-стрим через fake anthropic-провайдера
+        val streamBody = webTestClient.post().uri("/api/chat/send?key=test&model=fake-model")
+            .contentType(MediaType.APPLICATION_JSON)
+            .bodyValue("""{"content":"привет"}""")
+            .exchange().expectStatus().isOk
+            .expectHeader().contentTypeCompatibleWith(MediaType.parseMediaType("application/x-ndjson"))
+            .expectBody(String::class.java).returnResult().responseBody!!
+        assertTrue(streamBody.contains("\"type\":\"text\""))
+        assertTrue(streamBody.contains("\"type\":\"done\""))
+
+        // история сохраняется (user + assistant — ассистент пишется асинхронно)
+        runBlocking {
+            withTimeout(5_000) {
+                while (true) {
+                    val count = jdbcTemplate.queryForObject(
+                        "SELECT COUNT(*) FROM chat_message WHERE client_key = 'test'",
+                        Int::class.java,
+                    )
+                    if (count != null && count >= 2) break
+                    delay(100)
+                }
+            }
+        }
+        val stateBody = webTestClient.get().uri("/api/chat/state?key=test")
+            .exchange().expectStatus().isOk
+            .expectBody(String::class.java).returnResult().responseBody!!
+        val state = objectMapper.readTree(stateBody)
+        assertEquals("привет", state.path("thread").path("title").asText()) // авто-заголовок
+        assertEquals(2, state.path("messages").size())
+        assertEquals("user", state.path("messages").get(0).path("role").asText())
+        assertEquals("assistant", state.path("messages").get(1).path("role").asText())
+        assertEquals("привет", state.path("messages").get(1).path("content").asText())
+
+        // usage атрибутируется выбранному ключу
+        awaitUsageEventRow("model = 'fake-model' AND client_key = 'test' AND stream = 1")
+
+        // переименование треда
+        webTestClient.put().uri("/api/chat/thread?key=test")
+            .contentType(MediaType.APPLICATION_JSON)
+            .bodyValue("""{"title":"Мой чат"}""")
+            .exchange().expectStatus().isOk
+        webTestClient.get().uri("/api/chat/state?key=test")
+            .exchange().expectStatus().isOk
+            .expectBody()
+            .jsonPath("$.thread.title").isEqualTo("Мой чат")
+
+        // сброс
+        webTestClient.delete().uri("/api/chat/messages?key=test")
+            .exchange().expectStatus().isOk
+        webTestClient.get().uri("/api/chat/state?key=test")
+            .exchange().expectStatus().isOk
+            .expectBody()
+            .jsonPath("$.messages.length()").isEqualTo(0)
     }
 
     private fun asLong(value: Any?): Long = (value as Number).toLong()

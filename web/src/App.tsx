@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react'
+import ChatPage from './pages/ChatPage'
 import DashboardPage from './pages/DashboardPage'
 import ExposurePage from './pages/ExposurePage'
 import KeysPage from './pages/KeysPage'
 import ModelsPage from './pages/ModelsPage'
 
-type Page = 'dashboard' | 'keys' | 'models' | 'exposure'
+type Page = 'dashboard' | 'keys' | 'models' | 'exposure' | 'chat'
 
 const REFRESH_INTERVAL_MILLISECONDS = 30_000
 
@@ -55,6 +56,12 @@ export default function App() {
           >
             Выдача моделей
           </button>
+          <button
+            className={page === 'chat' ? 'tab tab-active' : 'tab'}
+            onClick={() => setPage('chat')}
+          >
+            Чат
+          </button>
         </nav>
         <div className="app-refresh">
           <span className="muted">
@@ -70,6 +77,7 @@ export default function App() {
         {page === 'keys' && <KeysPage refreshTick={refreshTick} />}
         {page === 'models' && <ModelsPage refreshTick={refreshTick} />}
         {page === 'exposure' && <ExposurePage refreshTick={refreshTick} />}
+        {page === 'chat' && <ChatPage refreshTick={refreshTick} />}
       </main>
     </div>
   )
