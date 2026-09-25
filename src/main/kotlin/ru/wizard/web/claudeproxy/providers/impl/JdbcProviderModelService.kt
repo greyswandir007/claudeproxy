@@ -94,8 +94,10 @@ class JdbcProviderModelService(
                 """INSERT INTO provider
                    (name, type, base_url, api_key, extra_headers, exposed,
                     limit_window_tokens, limit_week_tokens, limit_month_tokens,
-                    effort_mapping, created_at, updated_at)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    effort_mapping, auth_type, oauth_grant, oauth_client_id,
+                    oauth_client_secret, oauth_token_url, oauth_scopes, oauth_refresh_token,
+                    created_at, updated_at)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 request.name,
                 request.type,
                 request.baseUrl,
@@ -106,6 +108,13 @@ class JdbcProviderModelService(
                 request.limitWeekTokens,
                 request.limitMonthTokens,
                 effortMappingJson(request.effortMapping),
+                request.authType ?: "api_key",
+                request.oauthGrant ?: "client_credentials",
+                request.oauthClientId ?: "",
+                request.oauthClientSecret ?: "",
+                request.oauthTokenUrl ?: "",
+                request.oauthScopes ?: "",
+                request.oauthRefreshToken ?: "",
                 now,
                 now,
             )
@@ -137,7 +146,10 @@ class JdbcProviderModelService(
             jdbcTemplate.update(
                 """UPDATE provider SET name = ?, type = ?, base_url = ?, extra_headers = ?,
                    limit_window_tokens = ?, limit_week_tokens = ?, limit_month_tokens = ?,
-                   effort_mapping = ?""" +
+                   effort_mapping = ?, auth_type = ?, oauth_grant = ?, oauth_client_id = ?,
+                   oauth_token_url = ?, oauth_scopes = ?""" +
+                    (if (request.oauthClientSecret != null && request.oauthClientSecret.isNotBlank()) ", oauth_client_secret = ?" else "") +
+                    (if (request.oauthRefreshToken != null && request.oauthRefreshToken.isNotBlank()) ", oauth_refresh_token = ?" else "") +
                     (if (request.exposed != null) ", exposed = ?" else "") +
                     (if (updateApiKey) ", api_key = ?" else "") +
                     ", updated_at = ? WHERE id = ?",
@@ -320,6 +332,17 @@ class JdbcProviderModelService(
         arguments.add(request.limitWeekTokens)
         arguments.add(request.limitMonthTokens)
         arguments.add(effortMappingJson(request.effortMapping))
+        arguments.add(request.authType ?: "api_key")
+        arguments.add(request.oauthGrant ?: "client_credentials")
+        arguments.add(request.oauthClientId ?: "")
+        arguments.add(request.oauthTokenUrl ?: "")
+        arguments.add(request.oauthScopes ?: "")
+        if (request.oauthClientSecret != null && request.oauthClientSecret.isNotBlank()) {
+            arguments.add(request.oauthClientSecret)
+        }
+        if (request.oauthRefreshToken != null && request.oauthRefreshToken.isNotBlank()) {
+            arguments.add(request.oauthRefreshToken)
+        }
         if (request.exposed != null) {
             arguments.add(if (request.exposed) 1 else 0)
         }
@@ -385,7 +408,8 @@ class JdbcProviderModelService(
         jdbcTemplate.query(
             """SELECT name, type, base_url, api_key, extra_headers, exposed,
                       limit_window_tokens, limit_week_tokens, limit_month_tokens,
-                      effort_mapping, created_at, updated_at
+                      effort_mapping, auth_type, oauth_grant, oauth_client_id,
+                      oauth_token_url, oauth_scopes, created_at, updated_at
                FROM provider WHERE id = ?""",
             { resultSet ->
                 providerRows.add(
@@ -400,8 +424,13 @@ class JdbcProviderModelService(
                         resultSet.getLong(8).takeIf { !resultSet.wasNull() },
                         resultSet.getLong(9).takeIf { !resultSet.wasNull() },
                         resultSet.getString(10) ?: "{}",
-                        resultSet.getLong(11),
-                        resultSet.getLong(12),
+                        resultSet.getString(11).ifBlank { "api_key" },
+                        resultSet.getString(12).ifBlank { "client_credentials" },
+                        resultSet.getString(13),
+                        resultSet.getString(14),
+                        resultSet.getString(15),
+                        resultSet.getLong(16),
+                        resultSet.getLong(17),
                     ),
                 )
             },
@@ -451,9 +480,14 @@ class JdbcProviderModelService(
             limitMonthTokens = row[8] as Long?,
             effortMapping = parseEffortMapping(row[9] as String),
             settingOverrides = settingOverrides,
+            authType = row[10] as String,
+            oauthGrant = row[11] as String,
+            oauthClientId = row[12] as String? ?: "",
+            oauthTokenUrl = row[13] as String? ?: "",
+            oauthScopes = row[14] as String? ?: "",
             models = models,
-            createdAt = row[10] as Long,
-            updatedAt = row[11] as Long,
+            createdAt = row[15] as Long,
+            updatedAt = row[16] as Long,
         )
     }
 

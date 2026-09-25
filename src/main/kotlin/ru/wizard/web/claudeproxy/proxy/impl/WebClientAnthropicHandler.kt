@@ -17,6 +17,7 @@ import reactor.core.publisher.SignalType
 import ru.wizard.web.claudeproxy.auth.ApiKeyAuthFilter
 import ru.wizard.web.claudeproxy.proxy.AnthropicHandler
 import ru.wizard.web.claudeproxy.proxy.ProviderRequestAdjuster
+import ru.wizard.web.claudeproxy.providers.ProviderOAuthTokenService
 import ru.wizard.web.claudeproxy.proxy.SseUsageSniffer
 import ru.wizard.web.claudeproxy.proxy.UpstreamError
 import ru.wizard.web.claudeproxy.proxy.UpstreamRetryPolicy
@@ -36,6 +37,7 @@ class WebClientAnthropicHandler(
     private val objectMapper: ObjectMapper,
     private val usageRecorder: UsageRecorder,
     private val requestAdjuster: ProviderRequestAdjuster,
+    private val oauthTokenService: ProviderOAuthTokenService,
 ) : AnthropicHandler {
     private val logger = KotlinLogging.logger {}
 
@@ -48,19 +50,35 @@ class WebClientAnthropicHandler(
     ): ResponseEntity<Flux<DataBuffer>> {
         val stream = requestRoot.path("stream").asBoolean(false)
         val clientKey = exchange.getAttribute(ApiKeyAuthFilter.CLIENT_KEY_ATTRIBUTE) ?: "unknown"
+        // заголовок авторизации один на запрос: oauth → Bearer-токен, иначе x-api-key
+        val authorizationHeader = routes.firstOrNull()?.let { firstRoute ->
+            resolveAuthorizationHeader(firstRoute.provider)
+        }
         return if (stream) {
             ResponseEntity.ok()
                 .contentType(MediaType.TEXT_EVENT_STREAM)
                 .header(HttpHeaders.CACHE_CONTROL, "no-cache")
                 .body(
                     Flux.defer {
-                        attemptStream(exchange, routes, 0, requestRoot, upstreamPath, recordUsage, clientKey)
+                        attemptStream(
+                            exchange, routes, 0, requestRoot, upstreamPath,
+                            recordUsage, clientKey, authorizationHeader,
+                        )
                     },
                 )
         } else {
-            attemptSequential(exchange, routes, requestRoot, upstreamPath, recordUsage, clientKey)
+            attemptSequential(exchange, routes, requestRoot, upstreamPath, recordUsage, clientKey, authorizationHeader)
         }
     }
+
+    /** (имя-заголовка, значение): oauth → Authorization Bearer, иначе x-api-key. */
+    private suspend fun resolveAuthorizationHeader(provider: ModelRegistry.ProviderInfo): Pair<String, String> =
+        if (provider.authType == "oauth") {
+            val accessToken = oauthTokenService.accessToken(provider) ?: ""
+            HttpHeaders.AUTHORIZATION to "Bearer $accessToken"
+        } else {
+            "x-api-key" to provider.apiKey
+        }
 
     private suspend fun attemptSequential(
         exchange: ServerWebExchange,
@@ -69,11 +87,12 @@ class WebClientAnthropicHandler(
         upstreamPath: String,
         recordUsage: Boolean,
         clientKey: String,
+        authorizationHeader: Pair<String, String>?,
     ): ResponseEntity<Flux<DataBuffer>> {
         for ((index, route) in routes.withIndex()) {
             val startedAtMilliseconds = System.currentTimeMillis()
             try {
-                val responseEntity = buildCall(exchange, route, requestRoot, upstreamPath)
+                val responseEntity = buildCall(exchange, route, requestRoot, upstreamPath, authorizationHeader)
                     .retrieve()
                     .onStatus({ !it.is2xxSuccessful }) { response ->
                         response.toEntity(String::class.java).map { UpstreamError.from(it) }
@@ -139,12 +158,13 @@ class WebClientAnthropicHandler(
         upstreamPath: String,
         recordUsage: Boolean,
         clientKey: String,
+        authorizationHeader: Pair<String, String>?,
     ): Flux<DataBuffer> {
         val route = routes[index]
         val startedAtMilliseconds = System.currentTimeMillis()
         val usageSniffer = SseUsageSniffer(objectMapper)
         var emittedAnything = false
-        return buildCall(exchange, route, requestRoot, upstreamPath)
+        return buildCall(exchange, route, requestRoot, upstreamPath, authorizationHeader)
             .retrieve()
             .onStatus({ !it.is2xxSuccessful }) { response ->
                 response.toEntity(String::class.java).map { UpstreamError.from(it) }
@@ -196,7 +216,10 @@ class WebClientAnthropicHandler(
                         "Route '${route.provider.name}/${route.mapping.upstreamName}' failed before " +
                             "first event (${shortError(error)}) - switching to next route"
                     }
-                    attemptStream(exchange, routes, index + 1, requestRoot, upstreamPath, recordUsage, clientKey)
+                    attemptStream(
+                        exchange, routes, index + 1, requestRoot, upstreamPath,
+                        recordUsage, clientKey, authorizationHeader,
+                    )
                 } else {
                     logger.error(error) { "Stream from provider '${route.provider.name}' aborted" }
                     Flux.just(
@@ -212,6 +235,7 @@ class WebClientAnthropicHandler(
         route: ModelRegistry.Route,
         requestRoot: JsonNode,
         upstreamPath: String,
+        authorizationHeader: Pair<String, String>?,
     ): WebClient.RequestHeadersSpec<*> {
         val provider = route.provider
         val rewrittenRequest = (requestRoot as ObjectNode).deepCopy()
@@ -220,11 +244,13 @@ class WebClientAnthropicHandler(
         val requestSpecification = webClient.post()
             .uri(provider.baseUrl.trimEnd('/') + upstreamPath)
             .contentType(MediaType.APPLICATION_JSON)
-            .header("x-api-key", provider.apiKey)
-            .header(
-                "anthropic-version",
-                exchange.request.headers.getFirst("anthropic-version") ?: "2023-06-01",
-            )
+        if (authorizationHeader != null) {
+            requestSpecification.header(authorizationHeader.first, authorizationHeader.second)
+        }
+        requestSpecification.header(
+            "anthropic-version",
+            exchange.request.headers.getFirst("anthropic-version") ?: "2023-06-01",
+        )
         exchange.request.headers.getFirst("anthropic-beta")
             ?.let { requestSpecification.header("anthropic-beta", it) }
         provider.extraHeaders.forEach { (name, value) -> requestSpecification.header(name, value) }

@@ -134,6 +134,11 @@ export interface ManagedProvider {
   limitMonthTokens: number | null
   effortMapping: Record<string, string>
   settingOverrides: Record<string, string>
+  authType: 'api_key' | 'oauth'
+  oauthGrant: 'client_credentials' | 'refresh_token'
+  oauthClientId: string
+  oauthTokenUrl: string
+  oauthScopes: string
   models: ManagedModel[]
   createdAt: number
   updatedAt: number
@@ -151,6 +156,13 @@ export interface ProviderRequest {
   limitMonthTokens?: number | null
   effortMapping?: Record<string, string>
   settingOverrides?: Record<string, string>
+  authType?: 'api_key' | 'oauth'
+  oauthGrant?: 'client_credentials' | 'refresh_token'
+  oauthClientId?: string
+  oauthClientSecret?: string
+  oauthTokenUrl?: string
+  oauthScopes?: string
+  oauthRefreshToken?: string
 }
 
 /** Каталог оверрайдов — зеркалит ProviderSettingCatalog бэкенда. */

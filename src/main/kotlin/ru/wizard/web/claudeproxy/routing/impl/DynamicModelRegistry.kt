@@ -44,10 +44,12 @@ class DynamicModelRegistry(
         val effortMappingById = HashMap<Long, Map<String, String>>()
         val settingOverridesById = HashMap<Long, Map<String, String>>()
         jdbcTemplate.query(
-            "SELECT id, name, type, base_url, api_key, extra_headers, exposed, effort_mapping FROM provider",
+            """SELECT id, name, type, base_url, api_key, auth_type, extra_headers, exposed, effort_mapping
+               FROM provider""",
         ) { resultSet ->
             val identifier = resultSet.getLong("id")
             providersById[identifier] = ModelRegistry.ProviderInfo(
+                id = identifier,
                 name = resultSet.getString("name"),
                 type = resultSet.getString("type"),
                 baseUrl = resultSet.getString("base_url"),
@@ -55,6 +57,7 @@ class DynamicModelRegistry(
                     environment,
                     resultSet.getString("api_key"),
                 ),
+                authType = resultSet.getString("auth_type").ifBlank { "api_key" },
                 extraHeaders = parseExtraHeaders(resultSet.getString("extra_headers")),
                 effortMapping = emptyMap(),
                 settingOverrides = emptyMap(),

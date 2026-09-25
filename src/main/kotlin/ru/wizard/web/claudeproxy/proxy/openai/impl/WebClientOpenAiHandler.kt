@@ -21,6 +21,7 @@ import ru.wizard.web.claudeproxy.proxy.UsageAccumulator
 import ru.wizard.web.claudeproxy.proxy.UpstreamError
 import ru.wizard.web.claudeproxy.proxy.UpstreamRetryPolicy
 import ru.wizard.web.claudeproxy.proxy.ProviderRequestAdjuster
+import ru.wizard.web.claudeproxy.providers.ProviderOAuthTokenService
 import ru.wizard.web.claudeproxy.proxy.openai.OpenAiHandler
 import ru.wizard.web.claudeproxy.routing.ModelRegistry
 import ru.wizard.web.claudeproxy.usage.UsageEvent
@@ -38,6 +39,7 @@ class WebClientOpenAiHandler(
     private val objectMapper: ObjectMapper,
     private val usageRecorder: UsageRecorder,
     private val requestAdjuster: ProviderRequestAdjuster,
+    private val oauthTokenService: ProviderOAuthTokenService,
 ) : OpenAiHandler {
     private val logger = KotlinLogging.logger {}
 
@@ -56,17 +58,25 @@ class WebClientOpenAiHandler(
     ): ResponseEntity<Flux<DataBuffer>> {
         val stream = requestRoot.path("stream").asBoolean(false)
         val clientKey = exchange.getAttribute(ApiKeyAuthFilter.CLIENT_KEY_ATTRIBUTE) ?: "unknown"
+        // токен один на запрос: oauth-провайдеры получают его из token-сервиса
+        val bearerToken = routes.firstOrNull()?.let { firstRoute ->
+            if (firstRoute.provider.authType == "oauth") {
+                oauthTokenService.accessToken(firstRoute.provider) ?: ""
+            } else {
+                firstRoute.provider.apiKey
+            }
+        } ?: ""
         return if (stream) {
             ResponseEntity.ok()
                 .contentType(MediaType.TEXT_EVENT_STREAM)
                 .header(HttpHeaders.CACHE_CONTROL, "no-cache")
                 .body(
                     Flux.defer {
-                        attemptStream(exchange, routes, 0, requestRoot, recordUsage, clientKey)
+                        attemptStream(exchange, routes, 0, requestRoot, recordUsage, clientKey, bearerToken)
                     },
                 )
         } else {
-            attemptSequential(exchange, routes, requestRoot, recordUsage, clientKey)
+            attemptSequential(exchange, routes, requestRoot, recordUsage, clientKey, bearerToken)
         }
     }
 
@@ -93,11 +103,12 @@ class WebClientOpenAiHandler(
         requestRoot: JsonNode,
         recordUsage: Boolean,
         clientKey: String,
+        bearerToken: String,
     ): ResponseEntity<Flux<DataBuffer>> {
         for ((index, route) in routes.withIndex()) {
             val startedAtMilliseconds = System.currentTimeMillis()
             try {
-                val responseEntity = buildCall(route, requestRoot)
+                val responseEntity = buildCall(route, requestRoot, bearerToken)
                     .retrieve()
                     .onStatus({ !it.is2xxSuccessful }) { response ->
                         response.toEntity(String::class.java).map { errorTranslator.translate(it) }
@@ -179,12 +190,13 @@ class WebClientOpenAiHandler(
         requestRoot: JsonNode,
         recordUsage: Boolean,
         clientKey: String,
+        bearerToken: String,
     ): Flux<DataBuffer> {
         val route = routes[index]
         val startedAtMilliseconds = System.currentTimeMillis()
         val sseTranslator = OpenAiSseTranslator(objectMapper, route.mapping.publicName)
         var emittedAnything = false
-        return buildCall(route, requestRoot)
+        return buildCall(route, requestRoot, bearerToken)
             .retrieve()
             .onStatus({ !it.is2xxSuccessful }) { response ->
                 response.toEntity(String::class.java).map { errorTranslator.translate(it) }
@@ -238,7 +250,7 @@ class WebClientOpenAiHandler(
                         "Route '${route.provider.name}/${route.mapping.upstreamName}' failed before " +
                             "first event (${shortError(error)}) - switching to next route"
                     }
-                    attemptStream(exchange, routes, index + 1, requestRoot, recordUsage, clientKey)
+                    attemptStream(exchange, routes, index + 1, requestRoot, recordUsage, clientKey, bearerToken)
                 } else {
                     logger.error(error) { "Stream from provider '${route.provider.name}' aborted" }
                     Flux.just(
@@ -252,6 +264,7 @@ class WebClientOpenAiHandler(
     private fun buildCall(
         route: ModelRegistry.Route,
         requestRoot: JsonNode,
+        bearerToken: String,
     ): WebClient.RequestHeadersSpec<*> {
         val provider = route.provider
         val adjustedRoot = requestAdjuster.adjust(requestRoot as ObjectNode, provider)
@@ -259,7 +272,7 @@ class WebClientOpenAiHandler(
         val requestSpecification = webClient.post()
             .uri(provider.baseUrl.trimEnd('/') + "/chat/completions")
             .contentType(MediaType.APPLICATION_JSON)
-            .header(HttpHeaders.AUTHORIZATION, "Bearer ${provider.apiKey}")
+            .header(HttpHeaders.AUTHORIZATION, "Bearer $bearerToken")
         provider.extraHeaders.forEach { (name, value) -> requestSpecification.header(name, value) }
         return requestSpecification.bodyValue(objectMapper.writeValueAsBytes(translatedRequest))
     }

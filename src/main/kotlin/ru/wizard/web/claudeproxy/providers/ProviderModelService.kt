@@ -22,6 +22,12 @@ interface ProviderModelService {
         val effortMapping: Map<String, String>,
         /** Оверрайды (ключи из ProviderSettingCatalog). */
         val settingOverrides: Map<String, String>,
+        /** api_key | oauth. */
+        val authType: String,
+        val oauthGrant: String,
+        val oauthClientId: String,
+        val oauthTokenUrl: String,
+        val oauthScopes: String,
         val models: List<ModelView>,
         val createdAt: Long,
         val updatedAt: Long,
@@ -55,6 +61,17 @@ interface ProviderModelService {
         val effortMapping: Map<String, String>?,
         /** Оверрайды; при обновлении перезаписываются целиком. */
         val settingOverrides: Map<String, String>?,
+        /** api_key | oauth. */
+        val authType: String?,
+        /** OAuth: client_credentials | refresh_token. */
+        val oauthGrant: String?,
+        val oauthClientId: String?,
+        /** Допускается ${ENV_VAR}; при обновлении null/пусто = не менять. */
+        val oauthClientSecret: String?,
+        val oauthTokenUrl: String?,
+        val oauthScopes: String?,
+        /** Исходный refresh-токен (grant=refresh_token); ротация пишется в БД. */
+        val oauthRefreshToken: String?,
     )
 
     data class ModelRequest(

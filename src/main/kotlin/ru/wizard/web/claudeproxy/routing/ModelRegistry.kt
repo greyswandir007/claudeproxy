@@ -10,10 +10,13 @@ package ru.wizard.web.claudeproxy.routing
 interface ModelRegistry {
 
     data class ProviderInfo(
+        val id: Long,
         val name: String,
         val type: String,
         val baseUrl: String,
         val apiKey: String,
+        /** api_key | oauth. Для oauth хендлеры берут access-токен у ProviderOAuthTokenService. */
+        val authType: String,
         val extraHeaders: Map<String, String>,
         /** Маппер effort-уровней: канонический (low/medium/high/xhigh/max) → значение
          *  провайдера. Пустая карта — маппер выключен, уровни пробрасываются как есть. */

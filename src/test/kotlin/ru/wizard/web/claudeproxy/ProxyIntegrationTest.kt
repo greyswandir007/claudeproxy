@@ -905,6 +905,53 @@ class ProxyIntegrationTest {
         webTestClient.delete().uri("/api/providers/$providerId").exchange().expectStatus().isNoContent
     }
 
+    @Test
+    fun `oauth-провайдер получает access-токен и ходит с Bearer`() {
+        val createdProvider = webTestClient.post().uri("/api/providers")
+            .contentType(MediaType.APPLICATION_JSON)
+            .bodyValue(
+                """{"name":"oauth-provider","type":"openai",
+                    "baseUrl":"http://127.0.0.1:${upstreamPort()}",
+                    "authType":"oauth","oauthGrant":"client_credentials",
+                    "oauthClientId":"test-client","oauthClientSecret":"test-secret",
+                    "oauthTokenUrl":"http://127.0.0.1:${upstreamPort()}/oauth/token"}""",
+            )
+            .exchange().expectStatus().isCreated
+            .expectBody(String::class.java).returnResult().responseBody!!
+        val providerId = objectMapper.readTree(createdProvider).path("id").asLong()
+        assertEquals("oauth", objectMapper.readTree(createdProvider).path("authType").asText())
+
+        webTestClient.post().uri("/api/providers/$providerId/models")
+            .contentType(MediaType.APPLICATION_JSON)
+            .bodyValue(
+                """{"publicName":"oauth-model","upstreamName":"echo-model",
+                    "reasoning":"map","maxCompletionParam":false,"priority":100}""",
+            )
+            .exchange().expectStatus().isCreated
+
+        // первый запрос: прокси сам получает токен у token endpoint и ходит с Bearer
+        val responseBody = webTestClient.post().uri("/v1/messages")
+            .header("x-api-key", SEED_API_KEY)
+            .contentType(MediaType.APPLICATION_JSON)
+            .bodyValue("""{"model":"oauth-model","max_tokens":50,"messages":[{"role":"user","content":"hi"}]}""")
+            .exchange().expectStatus().isOk
+            .expectBody(String::class.java).returnResult().responseBody!!
+        val echo = objectMapper.readTree(
+            objectMapper.readTree(responseBody)
+                .path("content").get(0).path("text").asText().removePrefix("echo:"),
+        )
+        assertEquals("Bearer oauth-test-token", echo.path("auth").asText())
+
+        // второй запрос: токен из кэша, token endpoint не дёргается (счётчик не растёт)
+        webTestClient.post().uri("/v1/messages")
+            .header("x-api-key", SEED_API_KEY)
+            .contentType(MediaType.APPLICATION_JSON)
+            .bodyValue("""{"model":"oauth-model","max_tokens":50,"messages":[{"role":"user","content":"hi"}]}""")
+            .exchange().expectStatus().isOk
+
+        webTestClient.delete().uri("/api/providers/$providerId").exchange().expectStatus().isNoContent
+    }
+
     private fun asLong(value: Any?): Long = (value as Number).toLong()
 
     private fun awaitUsageEventRows(condition: String): List<Map<String, Any?>> = runBlocking {
@@ -951,6 +998,18 @@ class ProxyIntegrationTest {
                             }.getOrNull()
                             val model = requestNode?.path("model")?.asText("") ?: ""
                             when {
+                                request.method() == io.netty.handler.codec.http.HttpMethod.POST &&
+                                    request.uri() == "/oauth/token" ->
+                                    response.status(HttpResponseStatus.OK)
+                                        .header("Content-Type", "application/json")
+                                        .sendString(
+                                            Mono.just(
+                                                """{"access_token":"oauth-test-token","token_type":"Bearer","expires_in":3600}""",
+                                            ),
+                                            CharsetUtil.UTF_8,
+                                        )
+                                        .then()
+
                                 request.method() == io.netty.handler.codec.http.HttpMethod.GET &&
                                     request.uri() == "/models" ->
                                     response.status(HttpResponseStatus.OK)
@@ -982,6 +1041,7 @@ class ProxyIntegrationTest {
                                         put("max_tokens", requestNode?.path("max_tokens")?.asLong(0) ?: 0L)
                                         put("temperature", requestNode?.path("temperature")?.asText("") ?: "")
                                         put("stop", requestNode?.path("stop")?.toString() ?: "")
+                                        put("auth", request.requestHeaders().get("Authorization") ?: "")
                                     }
                                     val echoBody = objectMapper.createObjectNode().apply {
                                         put("id", "chatcmpl-echo")

@@ -71,6 +71,17 @@ export default function ProviderForm({
   const [selectedSettingKey, setSelectedSettingKey] = useState('')
   const [showExtended, setShowExtended] = useState(isEditMode)
 
+  const [authType, setAuthType] = useState<'api_key' | 'oauth'>(
+    provider?.authType === 'oauth' ? 'oauth' : 'api_key',
+  )
+  const [oauthGrant, setOauthGrant] = useState<'client_credentials' | 'refresh_token'>(
+    provider?.oauthGrant === 'refresh_token' ? 'refresh_token' : 'client_credentials',
+  )
+  const [oauthClientId, setOauthClientId] = useState(provider?.oauthClientId ?? '')
+  const [oauthClientSecret, setOauthClientSecret] = useState('')
+  const [oauthTokenUrl, setOauthTokenUrl] = useState(provider?.oauthTokenUrl ?? '')
+  const [oauthScopes, setOauthScopes] = useState(provider?.oauthScopes ?? '')
+  const [oauthRefreshToken, setOauthRefreshToken] = useState('')
   const [discoveredModels, setDiscoveredModels] = useState<string[]>([])
   const [hiddenAlreadyAddedCount, setHiddenAlreadyAddedCount] = useState(0)
   const [selectedDiscovered, setSelectedDiscovered] = useState<Record<string, boolean>>({})
@@ -151,6 +162,13 @@ export default function ProviderForm({
           )
         : {},
       settingOverrides,
+      authType,
+      oauthGrant,
+      oauthClientId: oauthClientId.trim(),
+      ...(oauthClientSecret.trim().length > 0 ? { oauthClientSecret: oauthClientSecret.trim() } : {}),
+      oauthTokenUrl: oauthTokenUrl.trim(),
+      oauthScopes: oauthScopes.trim(),
+      ...(oauthRefreshToken.trim().length > 0 ? { oauthRefreshToken: oauthRefreshToken.trim() } : {}),
     }
     const result = isEditMode
       ? api.updateProvider(provider.id, request)
@@ -224,19 +242,92 @@ export default function ProviderForm({
           />
         </label>
         <label className="form-wide">
-          api-ключ{' '}
-          {isEditMode && (
-            <span className="muted">
-              (текущий: {provider.apiKeyPreview || '—'}; оставьте пустым, чтобы не менять)
-            </span>
-          )}
-          <input
-            type="password"
-            value={apiKey}
-            placeholder={isEditMode ? 'не менять' : 'ключ или ${ENV_VAR}'}
-            onChange={(event) => setApiKey(event.target.value)}
-          />
+          Авторизация
+          <select value={authType} onChange={(event) => setAuthType(event.target.value as 'api_key' | 'oauth')}>
+            <option value="api_key">api-ключ</option>
+            <option value="oauth">OAuth</option>
+          </select>
         </label>
+        {authType === 'api_key' ? (
+          <label className="form-wide">
+            api-ключ{' '}
+            {isEditMode && (
+              <span className="muted">
+                (текущий: {provider.apiKeyPreview || '—'}; оставьте пустым, чтобы не менять)
+              </span>
+            )}
+            <input
+              type="password"
+              value={apiKey}
+              placeholder={isEditMode ? 'не менять' : 'ключ или ${ENV_VAR}'}
+              onChange={(event) => setApiKey(event.target.value)}
+            />
+          </label>
+        ) : (
+          <>
+            <label>
+              Grant
+              <select
+                value={oauthGrant}
+                onChange={(event) =>
+                  setOauthGrant(event.target.value as 'client_credentials' | 'refresh_token')
+                }
+              >
+                <option value="client_credentials">client_credentials</option>
+                <option value="refresh_token">refresh_token</option>
+              </select>
+            </label>
+            <label>
+              client_id
+              <input
+                type="text"
+                value={oauthClientId}
+                placeholder="client_id"
+                onChange={(event) => setOauthClientId(event.target.value)}
+              />
+            </label>
+            <label className="form-wide">
+              client_secret{' '}
+              {isEditMode && <span className="muted">(пусто = не менять)</span>}
+              <input
+                type="password"
+                value={oauthClientSecret}
+                placeholder="секрет или ${ENV_VAR}"
+                onChange={(event) => setOauthClientSecret(event.target.value)}
+              />
+            </label>
+            <label className="form-wide">
+              token URL
+              <input
+                type="text"
+                value={oauthTokenUrl}
+                placeholder="https://provider.example/oauth/token"
+                onChange={(event) => setOauthTokenUrl(event.target.value)}
+              />
+            </label>
+            <label className="form-wide">
+              scopes (через пробел, опционально)
+              <input
+                type="text"
+                value={oauthScopes}
+                placeholder="read write"
+                onChange={(event) => setOauthScopes(event.target.value)}
+              />
+            </label>
+            {oauthGrant === 'refresh_token' && (
+              <label className="form-wide">
+                refresh-токен{' '}
+                {isEditMode && <span className="muted">(пусто = не менять; ротация пишется в БД)</span>}
+                <input
+                  type="password"
+                  value={oauthRefreshToken}
+                  placeholder="исходный refresh-токен или ${ENV_VAR}"
+                  onChange={(event) => setOauthRefreshToken(event.target.value)}
+                />
+              </label>
+            )}
+          </>
+        )}
       </div>
       {showExtended ? (
         <>

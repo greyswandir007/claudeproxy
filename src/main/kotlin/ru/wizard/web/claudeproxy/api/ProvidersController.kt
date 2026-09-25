@@ -132,6 +132,13 @@ class ProvidersController(
             limitMonthTokens = optionalLimit(node, "limitMonthTokens"),
             effortMapping = toStringMap(node.path("effortMapping").takeIf { it.isObject }),
             settingOverrides = toStringMap(node.path("settingOverrides").takeIf { it.isObject }),
+            authType = node.path("authType").takeIf { it.isTextual }?.asText(),
+            oauthGrant = node.path("oauthGrant").takeIf { it.isTextual }?.asText(),
+            oauthClientId = node.path("oauthClientId").takeIf { it.isTextual }?.asText(),
+            oauthClientSecret = node.path("oauthClientSecret").takeIf { it.isTextual && it.asText().isNotEmpty() }?.asText(),
+            oauthTokenUrl = node.path("oauthTokenUrl").takeIf { it.isTextual }?.asText(),
+            oauthScopes = node.path("oauthScopes").takeIf { it.isTextual }?.asText(),
+            oauthRefreshToken = node.path("oauthRefreshToken").takeIf { it.isTextual && it.asText().isNotEmpty() }?.asText(),
         )
     }
 
