@@ -2,11 +2,13 @@ import { useEffect, useMemo, useState } from 'react'
 import {
   api,
   type ClientKey,
+  type FallbackReport,
   type GroupedTimelinePoint,
   type GroupedUsage,
   type ProviderLimitUsage,
   type ProxyConfig,
   type RangeSummary,
+  type RouteCooldown,
   type TimelinePoint,
   type WindowBoundary,
   type WindowSummary,
@@ -14,6 +16,7 @@ import {
 import PeriodNavigator, { type PeriodRange } from '../components/PeriodNavigator'
 import PeriodCard from '../components/PeriodCard'
 import ProviderLimitBars from '../components/ProviderLimitBars'
+import RoutingHealth from '../components/RoutingHealth'
 import TimelineChart, { TOTAL_SERIES, pivotGroupedTimeline } from '../components/TimelineChart'
 import UsageTable from '../components/UsageTable'
 import WindowCard from '../components/WindowCard'
@@ -38,6 +41,8 @@ export default function DashboardPage({ refreshTick }: { refreshTick: number }) 
   const [windows, setWindows] = useState<WindowSummary[]>([])
   const [windowModels, setWindowModels] = useState<GroupedUsage[]>([])
   const [windowProviders, setWindowProviders] = useState<GroupedUsage[]>([])
+  const [fallbackReport, setFallbackReport] = useState<FallbackReport | null>(null)
+  const [routeCooldowns, setRouteCooldowns] = useState<RouteCooldown[]>([])
 
   // навигация по периодам
   const [selectedPreset, setSelectedPreset] = useState('last7days')
@@ -87,6 +92,14 @@ export default function DashboardPage({ refreshTick }: { refreshTick: number }) 
       .providerLimitUsage()
       .then(setProviderLimits)
       .catch(() => setProviderLimits([]))
+    api
+      .fallbackReport('7d', null)
+      .then(setFallbackReport)
+      .catch(() => setFallbackReport(null))
+    api
+      .routeCooldowns()
+      .then(setRouteCooldowns)
+      .catch(() => setRouteCooldowns([]))
   }, [refreshTick])
 
   // сводки и окна выбранного ключа
@@ -285,6 +298,7 @@ export default function DashboardPage({ refreshTick }: { refreshTick: number }) 
           labelTitle="Провайдер"
         />
       </div>
+      <RoutingHealth report={fallbackReport} cooldowns={routeCooldowns} />
       {providerLimits.length > 0 && (
         <section className="card dashboard-limits">
           <h2>

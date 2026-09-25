@@ -283,6 +283,33 @@ export const chatApi = {
   },
 }
 
+export interface ProviderHealth {
+  providerName: string
+  requests: number
+  failedAttempts: number
+  p50DurationMilliseconds: number
+  p95DurationMilliseconds: number
+}
+
+export interface FailedAttempt {
+  timestamp: number
+  model: string
+  providerName: string
+  status: number
+  error: string
+}
+
+export interface FallbackReport {
+  providers: ProviderHealth[]
+  recentFailures: FailedAttempt[]
+}
+
+export interface RouteCooldown {
+  providerName: string
+  cooldownUntilMilliseconds: number
+  reason: string
+}
+
 export interface ProviderLimitUsage {
   providerName: string
   window: LimitPeriodUsage | null
@@ -372,4 +399,9 @@ export const api = {
   setModelExposed: (id: number, exposed: boolean) =>
     putJson<{ exposed: boolean }>(`/api/models/${id}/exposure`, { exposed }),
   providerLimitUsage: () => getJson<ProviderLimitUsage[]>('/api/provider-limits'),
+  fallbackReport: (range: string, key: string | null) =>
+    getJson<FallbackReport>(
+      `/api/fallback-report?range=${range}${key ? `&key=${encodeURIComponent(key)}` : ''}`,
+    ),
+  routeCooldowns: () => getJson<RouteCooldown[]>('/api/route-cooldowns'),
 }

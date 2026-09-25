@@ -23,6 +23,7 @@ import ru.wizard.web.claudeproxy.proxy.UpstreamRetryPolicy
 import ru.wizard.web.claudeproxy.proxy.ProviderRequestAdjuster
 import ru.wizard.web.claudeproxy.proxy.TokenSavingAdjuster
 import ru.wizard.web.claudeproxy.providers.ProviderOAuthTokenService
+import ru.wizard.web.claudeproxy.routing.RouteCircuitBreaker
 import ru.wizard.web.claudeproxy.proxy.openai.OpenAiHandler
 import ru.wizard.web.claudeproxy.routing.ModelRegistry
 import ru.wizard.web.claudeproxy.usage.UsageEvent
@@ -42,6 +43,7 @@ class WebClientOpenAiHandler(
     private val requestAdjuster: ProviderRequestAdjuster,
     private val tokenSavingAdjuster: TokenSavingAdjuster,
     private val oauthTokenService: ProviderOAuthTokenService,
+    private val routeCircuitBreaker: RouteCircuitBreaker,
 ) : OpenAiHandler {
     private val logger = KotlinLogging.logger {}
 
@@ -60,8 +62,11 @@ class WebClientOpenAiHandler(
     ): ResponseEntity<Flux<DataBuffer>> {
         val stream = requestRoot.path("stream").asBoolean(false)
         val clientKey = exchange.getAttribute(ApiKeyAuthFilter.CLIENT_KEY_ATTRIBUTE) ?: "unknown"
+        // маршруты в кулдауне пропускаем; если кулдаун у всех — пробуем все
+        val activeRoutes = routes.filter { routeCircuitBreaker.isAvailable(it.provider.name) }
+            .ifEmpty { routes }
         // токен один на запрос: oauth-провайдеры получают его из token-сервиса
-        val bearerToken = routes.firstOrNull()?.let { firstRoute ->
+        val bearerToken = activeRoutes.firstOrNull()?.let { firstRoute ->
             if (firstRoute.provider.authType == "oauth") {
                 oauthTokenService.accessToken(firstRoute.provider) ?: ""
             } else {
@@ -74,11 +79,11 @@ class WebClientOpenAiHandler(
                 .header(HttpHeaders.CACHE_CONTROL, "no-cache")
                 .body(
                     Flux.defer {
-                        attemptStream(exchange, routes, 0, requestRoot, recordUsage, clientKey, bearerToken)
+                        attemptStream(exchange, activeRoutes, 0, requestRoot, recordUsage, clientKey, bearerToken)
                     },
                 )
         } else {
-            attemptSequential(exchange, routes, requestRoot, recordUsage, clientKey, bearerToken)
+            attemptSequential(exchange, activeRoutes, requestRoot, recordUsage, clientKey, bearerToken)
         }
     }
 
@@ -139,6 +144,7 @@ class WebClientOpenAiHandler(
                             savedTokens = savedTokens,
                         ),
                     )
+                    routeCircuitBreaker.success(route.provider.name)
                     return ResponseEntity.ok()
                         .contentType(MediaType.APPLICATION_JSON)
                         .body(
@@ -174,6 +180,13 @@ class WebClientOpenAiHandler(
                             error = shortError(error),
                             savedTokens = 0,
                         ),
+                    )
+                }
+                if (UpstreamRetryPolicy.isRetryable(error)) {
+                    routeCircuitBreaker.trip(
+                        route.provider.name,
+                        shortError(error),
+                        UpstreamRetryPolicy.cooldownMilliseconds(error),
                     )
                 }
                 if (!UpstreamRetryPolicy.isRetryable(error) || index == routes.lastIndex) {
@@ -232,6 +245,9 @@ class WebClientOpenAiHandler(
                 }
             }
             .doFinally { signal ->
+                if (signal != SignalType.ON_ERROR) {
+                    routeCircuitBreaker.success(route.provider.name)
+                }
                 if (recordUsage && signal != SignalType.ON_ERROR) {
                     usageRecorder.recordAsync(
                         usageEvent(
@@ -250,6 +266,13 @@ class WebClientOpenAiHandler(
             .map { eventText -> eventText.toByteArray(UTF_8) }
             .map { eventBytes -> exchange.response.bufferFactory().wrap(eventBytes) }
             .onErrorResume { error ->
+                if (UpstreamRetryPolicy.isRetryable(error)) {
+                    routeCircuitBreaker.trip(
+                        route.provider.name,
+                        shortError(error),
+                        UpstreamRetryPolicy.cooldownMilliseconds(error),
+                    )
+                }
                 val canFallback = UpstreamRetryPolicy.isRetryable(error) &&
                     !emittedAnything &&
                     index < routes.lastIndex

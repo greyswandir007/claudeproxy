@@ -17,6 +17,7 @@ class StatsController(
     private val statsService: StatsService,
     private val modelRegistry: ModelRegistry,
     private val proxyProperties: ProxyProperties,
+    private val routeCircuitBreaker: ru.wizard.web.claudeproxy.routing.RouteCircuitBreaker,
 ) {
 
     @GetMapping("/api/summary")
@@ -91,6 +92,18 @@ class StatsController(
     @GetMapping("/api/provider-limits")
     suspend fun providerLimits(): List<StatsService.ProviderLimitUsage> =
         statsService.providerLimitUsage()
+
+    /** Здоровье маршрутов: ошибки/латентность p50-p95 + лента переключений. */
+    @GetMapping("/api/fallback-report")
+    suspend fun fallbackReport(
+        @RequestParam(defaultValue = "7d") range: String,
+        @RequestParam(name = "key", required = false) clientKey: String?,
+    ): StatsService.FallbackReport = statsService.fallbackReport(range, clientKey)
+
+    /** Активные кулдауны провайдеров (circuit breaker). */
+    @GetMapping("/api/route-cooldowns")
+    fun routeCooldowns(): List<ru.wizard.web.claudeproxy.routing.RouteCircuitBreaker.CooldownState> =
+        routeCircuitBreaker.activeCooldowns()
 
     /** Провайдеры и модели из реестра (read-only, без ключей провайдеров). */
     @GetMapping("/api/config")

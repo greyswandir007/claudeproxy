@@ -127,4 +127,29 @@ interface StatsService {
 
     /** Только провайдеры, у которых задан хотя бы один лимит. */
     suspend fun providerLimitUsage(): List<ProviderLimitUsage>
+
+    /** Здоровье провайдеров: запросы/ошибки/латентность p50-p95 за диапазон. */
+    data class ProviderHealth(
+        val providerName: String,
+        val requests: Long,
+        val failedAttempts: Long,
+        val p50DurationMilliseconds: Long,
+        val p95DurationMilliseconds: Long,
+    )
+
+    /** Неудачная попытка маршрута (для ленты переключений). */
+    data class FailedAttempt(
+        val timestamp: Long,
+        val model: String,
+        val providerName: String,
+        val status: Int,
+        val error: String,
+    )
+
+    data class FallbackReport(
+        val providers: List<ProviderHealth>,
+        val recentFailures: List<FailedAttempt>,
+    )
+
+    suspend fun fallbackReport(range: String, clientKey: String?): FallbackReport
 }

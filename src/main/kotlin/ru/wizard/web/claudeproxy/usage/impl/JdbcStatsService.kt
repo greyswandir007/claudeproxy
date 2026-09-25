@@ -267,6 +267,82 @@ class JdbcStatsService(
             )
         }
 
+    override suspend fun fallbackReport(range: String, clientKey: String?): StatsService.FallbackReport =
+        databaseProvider.execute { fallbackReportBlocking(range, clientKey) }
+
+    private fun fallbackReportBlocking(range: String, clientKey: String?): StatsService.FallbackReport {
+        val bounds = resolveBounds(range, clientKey)
+        val keyCondition = if (clientKey != null) " AND client_key = ?" else ""
+        val rangeArguments = queryArguments(bounds.first, bounds.second, clientKey)
+
+        // запросы/ошибки по провайдерам
+        data class HealthRow(var requests: Long = 0, var failed: Long = 0)
+        val healthByName = HashMap<String, HealthRow>()
+        jdbcTemplate.query(
+            """SELECT provider, COUNT(*),
+                      COALESCE(SUM(CASE WHEN status >= 400 OR error IS NOT NULL THEN 1 ELSE 0 END), 0)
+               FROM usage_event
+               WHERE ts >= ? AND ts <= ?$keyCondition
+               GROUP BY provider""",
+            { resultSet ->
+                healthByName[resultSet.getString(1)] =
+                    HealthRow(resultSet.getLong(2), resultSet.getLong(3))
+            },
+            *rangeArguments,
+        )
+
+        // латентность успешных попыток по провайдерам (для перцентилей)
+        val durationsByName = HashMap<String, MutableList<Long>>()
+        jdbcTemplate.query(
+            """SELECT provider, duration_ms FROM usage_event
+               WHERE ts >= ? AND ts <= ? AND status = 200 AND duration_ms IS NOT NULL$keyCondition""",
+            { resultSet ->
+                durationsByName
+                    .getOrPut(resultSet.getString(1)) { ArrayList() }
+                    .add(resultSet.getLong(2))
+            },
+            *rangeArguments,
+        )
+
+        val providers = healthByName.map { (name, health) ->
+            val durations = (durationsByName[name] ?: emptyList()).sorted()
+            StatsService.ProviderHealth(
+                providerName = name,
+                requests = health.requests,
+                failedAttempts = health.failed,
+                p50DurationMilliseconds = percentile(durations, 0.50),
+                p95DurationMilliseconds = percentile(durations, 0.95),
+            )
+        }.sortedByDescending { it.requests }
+
+        // последние неудачные попытки (лента переключений)
+        val recentFailures = ArrayList<StatsService.FailedAttempt>()
+        jdbcTemplate.query(
+            """SELECT ts, model, provider, status, COALESCE(error, '') FROM usage_event
+               WHERE ts >= ? AND ts <= ? AND (status >= 400 OR error IS NOT NULL)$keyCondition
+               ORDER BY id DESC LIMIT 10""",
+            { resultSet ->
+                recentFailures.add(
+                    StatsService.FailedAttempt(
+                        timestamp = resultSet.getLong(1),
+                        model = resultSet.getString(2),
+                        providerName = resultSet.getString(3),
+                        status = resultSet.getInt(4),
+                        error = resultSet.getString(5).take(160),
+                    ),
+                )
+            },
+            *rangeArguments,
+        )
+        return StatsService.FallbackReport(providers, recentFailures)
+    }
+
+    private fun percentile(sortedValues: List<Long>, fraction: Double): Long {
+        if (sortedValues.isEmpty()) return 0
+        val index = ((sortedValues.size - 1) * fraction).toInt()
+        return sortedValues[index]
+    }
+
     override suspend fun providerLimitUsage(): List<StatsService.ProviderLimitUsage> =
         databaseProvider.execute { providerLimitUsageBlocking() }
 

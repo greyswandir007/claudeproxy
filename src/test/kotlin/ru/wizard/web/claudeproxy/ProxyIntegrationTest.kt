@@ -629,6 +629,31 @@ class ProxyIntegrationTest {
         assertTrue(streamBody.contains("event: message_stop"))
         awaitUsageEventRows("model = 'fb-model' AND stream = 1 AND status = 200")
 
+        // после 429 primary в кулдауне — виден в /api/route-cooldowns
+        webTestClient.get().uri("/api/route-cooldowns")
+            .exchange().expectStatus().isOk
+            .expectBody()
+            .jsonPath("$[?(@.providerName == 'fallback-primary')]").isNotEmpty
+
+        // второй запрос не дёргает primary (кулдаун) — сразу secondary
+        webTestClient.post().uri("/v1/messages")
+            .header("x-api-key", SEED_API_KEY)
+            .contentType(MediaType.APPLICATION_JSON)
+            .bodyValue(CLAUDE_REQUEST_WITH_TOOLS.replace("fake-openai-model", "fb-model"))
+            .exchange().expectStatus().isOk
+        val successRowsAfterSecond = awaitUsageEventRows("model = 'fb-model' AND stream = 0 AND status = 200")
+        // успешных две (первый и второй запрос), а 429-попытка одна — кулдаун работает
+        assertEquals(2, successRowsAfterSecond.size)
+        val failedRowsAfterSecond = awaitUsageEventRows("model = 'fb-model' AND stream = 0 AND status = 429")
+        assertEquals(1, failedRowsAfterSecond.size)
+
+        // fallback-report: ошибки и латентность primary
+        webTestClient.get().uri("/api/fallback-report?range=7d")
+            .exchange().expectStatus().isOk
+            .expectBody()
+            .jsonPath("$.providers[?(@.providerName == 'fallback-primary')].failedAttempts")
+            .isEqualTo(1)
+
         webTestClient.delete().uri("/api/providers/$primaryProviderId").exchange().expectStatus().isNoContent
         webTestClient.delete().uri("/api/providers/$secondaryProviderId").exchange().expectStatus().isNoContent
     }

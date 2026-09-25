@@ -21,4 +21,18 @@ object UpstreamRetryPolicy {
 
     fun isRetryableStatus(status: Int): Boolean =
         status == 408 || status == 429 || status >= 500
+
+    /**
+     * Длительность кулдауна после повторимой ошибки: из retry-after (секунды),
+     * иначе дефолт 30 с. Ограничен потолком в RouteCircuitBreaker.
+     */
+    fun cooldownMilliseconds(error: Throwable): Long {
+        if (error is UpstreamError && !error.retryAfter.isNullOrBlank()) {
+            val seconds = error.retryAfter.trim().toDoubleOrNull()
+            if (seconds != null && seconds > 0) {
+                return (seconds * 1000).toLong()
+            }
+        }
+        return ru.wizard.web.claudeproxy.routing.RouteCircuitBreaker.DEFAULT_COOLDOWN_MILLISECONDS
+    }
 }

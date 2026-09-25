@@ -966,6 +966,43 @@ th.numeric {
   padding: 10px 12px;
 }
 
+.cooldown-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0 0 12px;
+}
+
+.cooldown-badge {
+  background: rgba(208, 59, 59, 0.12);
+  border: 1px solid rgba(208, 59, 59, 0.4);
+  color: #e66767;
+  border-radius: 999px;
+  padding: 4px 12px;
+  font-size: 12.5px;
+}
+
+.failures-list {
+  margin-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.failure-row {
+  display: grid;
+  grid-template-columns: 60px minmax(140px, 1fr) 70px minmax(120px, 2fr);
+  gap: 10px;
+  align-items: center;
+  font-size: 12.5px;
+}
+
+.failure-error {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .exposure-page {
   display: flex;
   flex-direction: column;
