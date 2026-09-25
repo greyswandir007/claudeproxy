@@ -386,6 +386,27 @@ class JdbcStatsService(
             )
         }
 
+    override suspend fun providerWindowBoundaries(
+        fromMilliseconds: Long,
+        toMilliseconds: Long,
+    ): List<StatsService.ProviderWindowBoundary> =
+        databaseProvider.execute {
+            jdbcTemplate.query(
+                """SELECT provider_name, started_at, ends_at FROM provider_usage_window
+                   WHERE started_at <= ? AND ends_at >= ?
+                   ORDER BY provider_name, started_at""",
+                { resultSet, _ ->
+                    StatsService.ProviderWindowBoundary(
+                        providerName = resultSet.getString(1),
+                        startedAtMilliseconds = resultSet.getLong(2),
+                        endsAtMilliseconds = resultSet.getLong(3),
+                    )
+                },
+                toMilliseconds,
+                fromMilliseconds,
+            )
+        }
+
     override suspend fun providerCosts(): List<StatsService.ProviderCost> =
         databaseProvider.execute { providerCostsBlocking() }
 

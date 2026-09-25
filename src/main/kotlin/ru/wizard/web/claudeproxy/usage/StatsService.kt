@@ -120,6 +120,19 @@ interface StatsService {
         toMilliseconds: Long,
     ): List<WindowBoundary>
 
+    /** 5-часовое окно провайдера для полос на графике (без счётчиков). */
+    data class ProviderWindowBoundary(
+        val providerName: String,
+        val startedAtMilliseconds: Long,
+        val endsAtMilliseconds: Long,
+    )
+
+    /** 5-часовые окна провайдеров, пересекающие диапазон (дорожки на графике дня). */
+    suspend fun providerWindowBoundaries(
+        fromMilliseconds: Long,
+        toMilliseconds: Long,
+    ): List<ProviderWindowBoundary>
+
     /** Выработка информационных лимитов провайдеров (только заданные категории). */
     data class ModelTokens(val modelName: String, val tokens: Long)
 

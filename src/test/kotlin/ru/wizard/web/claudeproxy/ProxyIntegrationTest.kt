@@ -396,6 +396,36 @@ class ProxyIntegrationTest {
     }
 
     @Test
+    fun `границы окон провайдеров отдаются по всем провайдерам в диапазоне`() {
+        val now = System.currentTimeMillis()
+        val hour = 3_600_000L
+        jdbcTemplate.update("DELETE FROM provider_usage_window")
+        jdbcTemplate.update(
+            "INSERT INTO provider_usage_window (provider_name, started_at, ends_at) VALUES (?, ?, ?)",
+            "fake", now - 5 * hour, now,
+        )
+        jdbcTemplate.update(
+            "INSERT INTO provider_usage_window (provider_name, started_at, ends_at) VALUES (?, ?, ?)",
+            "second", now - 2 * hour, now + 3 * hour,
+        )
+        // вне диапазона — не должно попасть в выдачу
+        jdbcTemplate.update(
+            "INSERT INTO provider_usage_window (provider_name, started_at, ends_at) VALUES (?, ?, ?)",
+            "old", now - 30 * hour, now - 25 * hour,
+        )
+
+        webTestClient.get()
+            .uri("/api/provider-window-boundaries?from=${now - 24 * hour}&to=$now")
+            .exchange().expectStatus().isOk
+            .expectBody()
+            .jsonPath("$[0].providerName").isEqualTo("fake")
+            .jsonPath("$[0].startedAtMilliseconds").isEqualTo(now - 5 * hour)
+            .jsonPath("$[1].providerName").isEqualTo("second")
+            .jsonPath("$[1].endsAtMilliseconds").isEqualTo(now + 3 * hour)
+            .jsonPath("$.length()").isEqualTo(2)
+    }
+
+    @Test
     fun `count_tokens пробрасывается`() {
         webTestClient.post().uri("/v1/messages/count_tokens")
             .header("x-api-key", SEED_API_KEY)

@@ -94,6 +94,14 @@ class StatsController(
     ): List<StatsService.WindowBoundary> =
         statsService.windowBoundaries(clientKey, fromMilliseconds, toMilliseconds)
 
+    /** Границы 5-часовых окон провайдеров в диапазоне — дорожки на графике дня. */
+    @GetMapping("/api/provider-window-boundaries")
+    suspend fun providerWindowBoundaries(
+        @RequestParam(name = "from") fromMilliseconds: Long,
+        @RequestParam(name = "to") toMilliseconds: Long,
+    ): List<StatsService.ProviderWindowBoundary> =
+        statsService.providerWindowBoundaries(fromMilliseconds, toMilliseconds)
+
     /** Выработка информационных лимитов провайдеров (заданные категории). */
     @GetMapping("/api/provider-limits")
     suspend fun providerLimits(): List<StatsService.ProviderLimitUsage> =

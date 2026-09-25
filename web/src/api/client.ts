@@ -264,6 +264,13 @@ export interface WindowBoundary {
   endsAtMilliseconds: number
 }
 
+/** 5-часовое окно провайдера — дорожки на графике дня. */
+export interface ProviderWindowBoundary {
+  providerName: string
+  startedAtMilliseconds: number
+  endsAtMilliseconds: number
+}
+
 export interface ChatMessage {
   id: number
   role: string
@@ -416,6 +423,10 @@ export const api = {
   windowBoundaries: (key: string, from: number, to: number) =>
     getJson<WindowBoundary[]>(
       `/api/window-boundaries?key=${encodeURIComponent(key)}&from=${from}&to=${to}`,
+    ),
+  providerWindowBoundaries: (from: number, to: number) =>
+    getJson<ProviderWindowBoundary[]>(
+      `/api/provider-window-boundaries?from=${from}&to=${to}`,
     ),
   byModelRange: (key: string | null, from: number, to: number) =>
     getJson<GroupedUsage[]>(

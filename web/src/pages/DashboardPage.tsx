@@ -13,6 +13,7 @@ import {
   type RouteCooldown,
   type TimelinePoint,
   type WindowBoundary,
+  type ProviderWindowBoundary,
   type WindowSummary,
 } from '../api/client'
 import PeriodNavigator, { type PeriodRange } from '../components/PeriodNavigator'
@@ -66,6 +67,7 @@ export default function DashboardPage({ refreshTick }: { refreshTick: number }) 
     { key: string; label: string; color: string }[]
   >([])
   const [boundaries, setBoundaries] = useState<WindowBoundary[]>([])
+  const [providerBoundaries, setProviderBoundaries] = useState<ProviderWindowBoundary[]>([])
   const [error, setError] = useState<string | null>(null)
 
   const keyParameter = selectedKey !== null && selectedKey.length > 0 ? selectedKey : null
@@ -222,6 +224,15 @@ export default function DashboardPage({ refreshTick }: { refreshTick: number }) 
     } else {
       setBoundaries([])
     }
+    // дорожки окон провайдеров — независимо от выбранного ключа
+    if (bucket === 'hour') {
+      api
+        .providerWindowBoundaries(from, to)
+        .then(setProviderBoundaries)
+        .catch(() => setProviderBoundaries([]))
+    } else {
+      setProviderBoundaries([])
+    }
   }, [refreshTick, periodRange, bucket, sliceMode, selectedKey])
 
   return (
@@ -294,6 +305,9 @@ export default function DashboardPage({ refreshTick }: { refreshTick: number }) 
         labels={timelineLabels}
         bucket={bucket}
         boundaries={boundaries}
+        providerWindows={providerBoundaries}
+        fromMilliseconds={periodRange.fromMilliseconds}
+        toMilliseconds={periodRange.toMilliseconds}
         keySelected={keyParameter !== ''}
       />
       <div className="tables-row">

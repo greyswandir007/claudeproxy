@@ -12,6 +12,7 @@ import {
 } from 'recharts'
 import type {
   GroupedTimelinePoint,
+  ProviderWindowBoundary,
   WindowBoundary,
 } from '../api/client'
 import { formatDay, formatTime, formatTokens } from '../format'
@@ -39,6 +40,9 @@ const TOTAL_SERIES = [
 
 const GRIDLINE = '#2c2c2a'
 const MUTED_INK = '#898781'
+
+// Цвета дорожек окон провайдеров над графиком (по порядку появления провайдера).
+const PROVIDER_LANE_COLORS = ['#9085e9', '#d55181', '#e66767', '#c98500', '#199e70']
 
 interface TooltipEntry {
   name?: string
@@ -85,12 +89,19 @@ export default function TimelineChart({
   labels,
   bucket,
   boundaries,
+  providerWindows,
+  fromMilliseconds,
+  toMilliseconds,
   keySelected,
 }: {
   data: Record<string, number | string>[]
   labels: { key: string; label: string; color: string }[]
   bucket: 'hour' | 'day'
   boundaries: WindowBoundary[]
+  providerWindows: ProviderWindowBoundary[]
+  /** Диапазон графика — для позиционирования дорожек окон провайдеров. */
+  fromMilliseconds: number
+  toMilliseconds: number
   keySelected: boolean
 }) {
   const [hoveredSeries, setHoveredSeries] = useState<string | null>(null)
@@ -98,6 +109,21 @@ export default function TimelineChart({
   const focus = isolatedSeries ?? hoveredSeries
   // активная серия: 1 — фокус, DIMMED — остальные
   const opacityOf = (key: string) => (focus === null || focus === key ? 1 : 0.15)
+
+  // дорожки окон провайдеров: строка на провайдера, окна — цветные отрезки диапазона
+  const providerLanes = (() => {
+    const lanesByName = new Map<string, ProviderWindowBoundary[]>()
+    for (const window of providerWindows) {
+      const lane = lanesByName.get(window.providerName) ?? []
+      lane.push(window)
+      lanesByName.set(window.providerName, lane)
+    }
+    return [...lanesByName.entries()].map(([providerName, windows], index) => ({
+      providerName,
+      color: PROVIDER_LANE_COLORS[index % PROVIDER_LANE_COLORS.length],
+      windows,
+    }))
+  })()
 
   // числовая ось времени: точки — начала корзин, по краям полкорзины воздуха;
   // деления — границы корзин, не чаще ~12, чтобы подписи не слипались
@@ -129,6 +155,9 @@ export default function TimelineChart({
             серые полосы — 5-часовые окна ключа, пунктир — старт, точки — конец
           </span>
         )}
+        {bucket === 'hour' && providerLanes.length > 0 && (
+          <span className="card-note">цветные дорожки — 5-часовые окна провайдеров</span>
+        )}
         {bucket === 'hour' && boundaries.length === 0 && !keySelected && (
           <span className="card-note">5-часовые окна — выберите конкретный ключ</span>
         )}
@@ -157,6 +186,40 @@ export default function TimelineChart({
             </span>
           ))}
         </div>
+        {bucket === 'hour' && providerLanes.length > 0 && (
+          <div className="provider-lanes">
+            {providerLanes.map((lane) => (
+              <div className="provider-lane" key={lane.providerName}>
+                <span className="provider-lane-name" title={lane.providerName}>
+                  {lane.providerName}
+                </span>
+                <div className="provider-lane-track">
+                  {lane.windows.map((window, windowIndex) => {
+                    const clipFrom = Math.max(window.startedAtMilliseconds, fromMilliseconds)
+                    const clipTo = Math.min(window.endsAtMilliseconds, toMilliseconds)
+                    if (clipTo <= clipFrom) return null
+                    const leftPercent =
+                      ((clipFrom - fromMilliseconds) / (toMilliseconds - fromMilliseconds)) * 100
+                    const widthPercent =
+                      ((clipTo - clipFrom) / (toMilliseconds - fromMilliseconds)) * 100
+                    return (
+                      <div
+                        key={windowIndex}
+                        className="provider-lane-segment"
+                        style={{
+                          left: `${leftPercent}%`,
+                          width: `${widthPercent}%`,
+                          background: lane.color,
+                        }}
+                        title={`${lane.providerName}: окно ${formatTime(clipFrom)} — ${formatTime(clipTo)}`}
+                      />
+                    )
+                  })}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
         <ResponsiveContainer width="100%" height={280}>
           <LineChart data={data} margin={{ top: 8, right: 8, bottom: 0, left: 8 }}>
             <CartesianGrid stroke={GRIDLINE} vertical={false} />

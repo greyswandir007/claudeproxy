@@ -295,6 +295,45 @@ body {
   flex: none;
 }
 
+/* Дорожки 5-часовых окон провайдеров над графиком: строка на провайдера. */
+.provider-lanes {
+  margin: 0 8px 6px 0;
+  /* левая кромка совпадает с полем графика: margin 8 + ось Y 64 */
+  padding-left: 72px;
+}
+
+.provider-lane {
+  position: relative;
+  height: 10px;
+  margin-bottom: 3px;
+}
+
+.provider-lane-name {
+  position: absolute;
+  left: -72px;
+  width: 64px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: right;
+  font-size: 10px;
+  line-height: 10px;
+  color: var(--text-secondary);
+}
+
+.provider-lane-track {
+  position: absolute;
+  inset: 0;
+}
+
+.provider-lane-segment {
+  position: absolute;
+  top: 0;
+  height: 100%;
+  border-radius: 3px;
+  opacity: 0.75;
+}
+
 .chart-tooltip {
   background: var(--page-plane);
   border: 1px solid var(--border);
