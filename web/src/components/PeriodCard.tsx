@@ -38,6 +38,9 @@ export default function PeriodCard({ summary }: { summary: RangeSummary }) {
       </dl>
       <div className="period-average">
         в среднем <strong>{formatTokens(Math.round(averagePerWindow))}</strong> за 5 ч
+        {summary.totals.savedTokens > 0 && (
+          <> · сэкономлено <strong>{formatTokens(summary.totals.savedTokens)}</strong></>
+        )}
       </div>
     </section>
   )

@@ -445,7 +445,8 @@ class JdbcStatsService(
         return jdbcTemplate.queryForObject(
             """SELECT COUNT(*),
                       COALESCE(SUM(input_tokens), 0), COALESCE(SUM(output_tokens), 0),
-                      COALESCE(SUM(cache_creation_tokens), 0), COALESCE(SUM(cache_read_tokens), 0)
+                      COALESCE(SUM(cache_creation_tokens), 0), COALESCE(SUM(cache_read_tokens), 0),
+                      COALESCE(SUM(cache_read_tokens + saved_tokens), 0)
                FROM usage_event
                WHERE $conditions""",
             { resultSet, _ ->
@@ -455,6 +456,7 @@ class JdbcStatsService(
                     outputTokens = resultSet.getLong(3),
                     cacheCreationTokens = resultSet.getLong(4),
                     cacheReadTokens = resultSet.getLong(5),
+                    savedTokens = resultSet.getLong(6),
                 )
             },
             *arguments.toTypedArray(),

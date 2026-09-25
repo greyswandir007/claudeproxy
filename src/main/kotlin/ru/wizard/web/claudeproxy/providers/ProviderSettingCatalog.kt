@@ -73,6 +73,27 @@ object ProviderSettingCatalog {
             valueType = ValueType.NON_EMPTY_TEXT,
             placeholder = "</end>",
         ),
+        SettingDefinition(
+            key = "CACHE_INJECTION",
+            title = "Экономия: инъекция кэш-маркеров",
+            description = "anthropic: cache_control на system/tools, если клиент не поставил; openai: стабильный prompt_cache_key",
+            valueType = ValueType.BOOLEAN,
+            placeholder = "true",
+        ),
+        SettingDefinition(
+            key = "TRIM_OLD_TOOL_RESULTS",
+            title = "Экономия: обрезка старых tool_result",
+            description = "tool_result старше последних 4 заменяются на «[trimmed]» — экономия на длинных агентных сессиях",
+            valueType = ValueType.BOOLEAN,
+            placeholder = "true",
+        ),
+        SettingDefinition(
+            key = "DROP_OLD_TOOL_IMAGES",
+            title = "Экономия: удаление старых картинок",
+            description = "Изображения старше последних 2 сообщений удаляются (~1600 токенов за картинку)",
+            valueType = ValueType.BOOLEAN,
+            placeholder = "true",
+        ),
     )
 
     private val byKey = definitions.associateBy { it.key }

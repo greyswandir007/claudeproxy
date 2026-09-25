@@ -21,6 +21,7 @@ import ru.wizard.web.claudeproxy.proxy.UsageAccumulator
 import ru.wizard.web.claudeproxy.proxy.UpstreamError
 import ru.wizard.web.claudeproxy.proxy.UpstreamRetryPolicy
 import ru.wizard.web.claudeproxy.proxy.ProviderRequestAdjuster
+import ru.wizard.web.claudeproxy.proxy.TokenSavingAdjuster
 import ru.wizard.web.claudeproxy.providers.ProviderOAuthTokenService
 import ru.wizard.web.claudeproxy.proxy.openai.OpenAiHandler
 import ru.wizard.web.claudeproxy.routing.ModelRegistry
@@ -39,6 +40,7 @@ class WebClientOpenAiHandler(
     private val objectMapper: ObjectMapper,
     private val usageRecorder: UsageRecorder,
     private val requestAdjuster: ProviderRequestAdjuster,
+    private val tokenSavingAdjuster: TokenSavingAdjuster,
     private val oauthTokenService: ProviderOAuthTokenService,
 ) : OpenAiHandler {
     private val logger = KotlinLogging.logger {}
@@ -108,7 +110,8 @@ class WebClientOpenAiHandler(
         for ((index, route) in routes.withIndex()) {
             val startedAtMilliseconds = System.currentTimeMillis()
             try {
-                val responseEntity = buildCall(route, requestRoot, bearerToken)
+                val (callSpecification, savedTokens) = buildCall(route, requestRoot, bearerToken)
+                val responseEntity = callSpecification
                     .retrieve()
                     .onStatus({ !it.is2xxSuccessful }) { response ->
                         response.toEntity(String::class.java).map { errorTranslator.translate(it) }
@@ -133,6 +136,7 @@ class WebClientOpenAiHandler(
                             } else {
                                 null
                             },
+                            savedTokens = savedTokens,
                         ),
                     )
                     return ResponseEntity.ok()
@@ -168,6 +172,7 @@ class WebClientOpenAiHandler(
                             startedAtMilliseconds = startedAtMilliseconds,
                             status = errorStatus(error),
                             error = shortError(error),
+                            savedTokens = 0,
                         ),
                     )
                 }
@@ -196,7 +201,8 @@ class WebClientOpenAiHandler(
         val startedAtMilliseconds = System.currentTimeMillis()
         val sseTranslator = OpenAiSseTranslator(objectMapper, route.mapping.publicName)
         var emittedAnything = false
-        return buildCall(route, requestRoot, bearerToken)
+        val (callSpecification, savedTokens) = buildCall(route, requestRoot, bearerToken)
+        return callSpecification
             .retrieve()
             .onStatus({ !it.is2xxSuccessful }) { response ->
                 response.toEntity(String::class.java).map { errorTranslator.translate(it) }
@@ -220,6 +226,7 @@ class WebClientOpenAiHandler(
                             startedAtMilliseconds = startedAtMilliseconds,
                             status = errorStatus(error),
                             error = shortError(error),
+                            savedTokens = 0,
                         ),
                     )
                 }
@@ -235,6 +242,7 @@ class WebClientOpenAiHandler(
                             startedAtMilliseconds = startedAtMilliseconds,
                             status = signalStatus(signal),
                             error = null,
+                       savedTokens = savedTokens,
                         ),
                     )
                 }
@@ -265,16 +273,18 @@ class WebClientOpenAiHandler(
         route: ModelRegistry.Route,
         requestRoot: JsonNode,
         bearerToken: String,
-    ): WebClient.RequestHeadersSpec<*> {
+    ): Pair<WebClient.RequestHeadersSpec<*>, Long> {
         val provider = route.provider
-        val adjustedRoot = requestAdjuster.adjust(requestRoot as ObjectNode, provider)
+        val adjustedRoot = requestRoot as ObjectNode
+        requestAdjuster.adjust(adjustedRoot, provider)
+        val savedTokens = tokenSavingAdjuster.adjust(adjustedRoot, provider)
         val translatedRequest = requestTranslator.translate(adjustedRoot, route)
         val requestSpecification = webClient.post()
             .uri(provider.baseUrl.trimEnd('/') + "/chat/completions")
             .contentType(MediaType.APPLICATION_JSON)
             .header(HttpHeaders.AUTHORIZATION, "Bearer $bearerToken")
         provider.extraHeaders.forEach { (name, value) -> requestSpecification.header(name, value) }
-        return requestSpecification.bodyValue(objectMapper.writeValueAsBytes(translatedRequest))
+        return requestSpecification.bodyValue(objectMapper.writeValueAsBytes(translatedRequest)) to savedTokens
     }
 
     private fun signalStatus(signal: SignalType): Int = when (signal) {
@@ -297,6 +307,7 @@ class WebClientOpenAiHandler(
         startedAtMilliseconds: Long,
         status: Int,
         error: String?,
+        savedTokens: Long = 0,
     ) = UsageEvent(
         ts = System.currentTimeMillis(),
         clientKey = clientKey,
@@ -311,6 +322,7 @@ class WebClientOpenAiHandler(
         durationMilliseconds = System.currentTimeMillis() - startedAtMilliseconds,
         status = status,
         error = error,
+        savedTokens = savedTokens,
     )
 
     private fun serverSentEventErrorBytes(message: String?): ByteArray {

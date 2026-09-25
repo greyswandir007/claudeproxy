@@ -1011,6 +1011,50 @@ class ProxyIntegrationTest {
             .jsonPath("$.messages.length()").isEqualTo(0)
     }
 
+    @Test
+    fun `экономия токенов — обрезка старых tool_result фиксируется в usage`() {
+        // echo-провайдер с включённой обрезкой: tool_result старше 4 → [trimmed]
+        val createdProvider = webTestClient.post().uri("/api/providers")
+            .contentType(MediaType.APPLICATION_JSON)
+            .bodyValue(
+                """{"name":"saver-provider","type":"openai",
+                    "baseUrl":"http://127.0.0.1:${upstreamPort()}","apiKey":"saver-secret",
+                    "settingOverrides":{"TRIM_OLD_TOOL_RESULTS":true,"CACHE_INJECTION":true}}""",
+            )
+            .exchange().expectStatus().isCreated
+            .expectBody(String::class.java).returnResult().responseBody!!
+        val providerId = objectMapper.readTree(createdProvider).path("id").asLong()
+        webTestClient.post().uri("/api/providers/$providerId/models")
+            .contentType(MediaType.APPLICATION_JSON)
+            .bodyValue(
+                """{"publicName":"saver-model","upstreamName":"echo-model",
+                    "reasoning":"map","maxCompletionParam":false,"priority":100}""",
+            )
+            .exchange().expectStatus().isCreated
+
+        // 6 tool_result в истории — старшие 2 будут обрезаны
+        val toolResults = (1..6).joinToString(",") { index ->
+            """{"type":"tool_result","tool_use_id":"toolu_$index","content":"${"данные инструмента номер $index. ".repeat(50)}"}"""
+        }
+        webTestClient.post().uri("/v1/messages")
+            .header("x-api-key", SEED_API_KEY)
+            .contentType(MediaType.APPLICATION_JSON)
+            .bodyValue(
+                """{"model":"saver-model","max_tokens":50,
+                    "messages":[
+                      {"role":"user","content":"выполни инструменты"},
+                      {"role":"user","content":[$toolResults]}]}""",
+            )
+            .exchange().expectStatus().isOk
+            .expectBody(String::class.java).returnResult().responseBody!!
+
+        // вырезанные токены зафиксированы (оценка символов/4 > 0)
+        val usageRow = awaitUsageEventRow("model = 'saver-model' AND stream = 0")
+        assertTrue(asLong(usageRow["saved_tokens"]) > 0)
+
+        webTestClient.delete().uri("/api/providers/$providerId").exchange().expectStatus().isNoContent
+    }
+
     private fun asLong(value: Any?): Long = (value as Number).toLong()
 
     private fun awaitUsageEventRows(condition: String): List<Map<String, Any?>> = runBlocking {

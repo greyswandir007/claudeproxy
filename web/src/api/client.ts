@@ -6,6 +6,8 @@ export interface UsageTotals {
   outputTokens: number
   cacheCreationTokens: number
   cacheReadTokens: number
+  /** Кэш-чтения + вырезанное инструментами экономии. */
+  savedTokens: number
 }
 
 export interface WindowSummary {
@@ -183,6 +185,9 @@ export const SETTING_CATALOG: SettingDefinition[] = [
   { key: 'FORCED_REASONING_EFFORT', title: 'Принудительный effort', description: 'Уровень effort после маппера', valueType: 'EFFORT_LEVEL', placeholder: 'medium' },
   { key: 'DISABLE_THINKING', title: 'Выключить thinking', description: 'Запрос уходит с thinking: disabled', valueType: 'BOOLEAN', placeholder: 'true' },
   { key: 'EXTRA_STOP_SEQUENCE', title: 'Доп. stop-последовательность', description: 'Добавляется к stop_sequences', valueType: 'NON_EMPTY_TEXT', placeholder: '</end>' },
+  { key: 'CACHE_INJECTION', title: 'Экономия: инъекция кэш-маркеров', description: 'anthropic: cache_control на system/tools; openai: стабильный prompt_cache_key', valueType: 'BOOLEAN', placeholder: 'true' },
+  { key: 'TRIM_OLD_TOOL_RESULTS', title: 'Экономия: обрезка старых tool_result', description: 'Старше последних 4 → «[trimmed]»', valueType: 'BOOLEAN', placeholder: 'true' },
+  { key: 'DROP_OLD_TOOL_IMAGES', title: 'Экономия: удаление старых картинок', description: 'Старше последних 2 сообщений (~1600 токенов/шт)', valueType: 'BOOLEAN', placeholder: 'true' },
 ]
 
 export const EFFORT_LEVELS = ['low', 'medium', 'high', 'xhigh', 'max'] as const

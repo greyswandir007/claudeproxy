@@ -17,6 +17,7 @@ import reactor.core.publisher.SignalType
 import ru.wizard.web.claudeproxy.auth.ApiKeyAuthFilter
 import ru.wizard.web.claudeproxy.proxy.AnthropicHandler
 import ru.wizard.web.claudeproxy.proxy.ProviderRequestAdjuster
+import ru.wizard.web.claudeproxy.proxy.TokenSavingAdjuster
 import ru.wizard.web.claudeproxy.providers.ProviderOAuthTokenService
 import ru.wizard.web.claudeproxy.proxy.SseUsageSniffer
 import ru.wizard.web.claudeproxy.proxy.UpstreamError
@@ -37,6 +38,7 @@ class WebClientAnthropicHandler(
     private val objectMapper: ObjectMapper,
     private val usageRecorder: UsageRecorder,
     private val requestAdjuster: ProviderRequestAdjuster,
+    private val tokenSavingAdjuster: TokenSavingAdjuster,
     private val oauthTokenService: ProviderOAuthTokenService,
 ) : AnthropicHandler {
     private val logger = KotlinLogging.logger {}
@@ -92,7 +94,9 @@ class WebClientAnthropicHandler(
         for ((index, route) in routes.withIndex()) {
             val startedAtMilliseconds = System.currentTimeMillis()
             try {
-                val responseEntity = buildCall(exchange, route, requestRoot, upstreamPath, authorizationHeader)
+                val (callSpecification, savedTokens) =
+                    buildCall(exchange, route, requestRoot, upstreamPath, authorizationHeader)
+                val responseEntity = callSpecification
                     .retrieve()
                     .onStatus({ !it.is2xxSuccessful }) { response ->
                         response.toEntity(String::class.java).map { UpstreamError.from(it) }
@@ -120,6 +124,7 @@ class WebClientAnthropicHandler(
                             } else {
                                 null
                             },
+                            savedTokens = savedTokens,
                         ),
                     )
                 }
@@ -135,6 +140,7 @@ class WebClientAnthropicHandler(
                             startedAtMilliseconds = startedAtMilliseconds,
                             status = errorStatus(error),
                             error = shortError(error),
+                            savedTokens = 0,
                         ),
                     )
                 }
@@ -164,7 +170,9 @@ class WebClientAnthropicHandler(
         val startedAtMilliseconds = System.currentTimeMillis()
         val usageSniffer = SseUsageSniffer(objectMapper)
         var emittedAnything = false
-        return buildCall(exchange, route, requestRoot, upstreamPath, authorizationHeader)
+        val (callSpecification, savedTokens) =
+            buildCall(exchange, route, requestRoot, upstreamPath, authorizationHeader)
+        return callSpecification
             .retrieve()
             .onStatus({ !it.is2xxSuccessful }) { response ->
                 response.toEntity(String::class.java).map { UpstreamError.from(it) }
@@ -188,6 +196,7 @@ class WebClientAnthropicHandler(
                             startedAtMilliseconds = startedAtMilliseconds,
                             status = errorStatus(error),
                             error = shortError(error),
+                            savedTokens = 0,
                         ),
                     )
                 }
@@ -203,6 +212,7 @@ class WebClientAnthropicHandler(
                             startedAtMilliseconds = startedAtMilliseconds,
                             status = signalStatus(signal),
                             error = null,
+                       savedTokens = savedTokens,
                         ),
                     )
                 }
@@ -236,11 +246,12 @@ class WebClientAnthropicHandler(
         requestRoot: JsonNode,
         upstreamPath: String,
         authorizationHeader: Pair<String, String>?,
-    ): WebClient.RequestHeadersSpec<*> {
+    ): Pair<WebClient.RequestHeadersSpec<*>, Long> {
         val provider = route.provider
         val rewrittenRequest = (requestRoot as ObjectNode).deepCopy()
             .put("model", route.mapping.upstreamName)
         requestAdjuster.adjust(rewrittenRequest, provider)
+        val savedTokens = tokenSavingAdjuster.adjust(rewrittenRequest, provider)
         val requestSpecification = webClient.post()
             .uri(provider.baseUrl.trimEnd('/') + upstreamPath)
             .contentType(MediaType.APPLICATION_JSON)
@@ -254,7 +265,7 @@ class WebClientAnthropicHandler(
         exchange.request.headers.getFirst("anthropic-beta")
             ?.let { requestSpecification.header("anthropic-beta", it) }
         provider.extraHeaders.forEach { (name, value) -> requestSpecification.header(name, value) }
-        return requestSpecification.bodyValue(objectMapper.writeValueAsBytes(rewrittenRequest))
+        return requestSpecification.bodyValue(objectMapper.writeValueAsBytes(rewrittenRequest)) to savedTokens
     }
 
     private fun buildClientResponse(
@@ -293,6 +304,7 @@ class WebClientAnthropicHandler(
         startedAtMilliseconds: Long,
         status: Int,
         error: String?,
+        savedTokens: Long = 0,
     ) = UsageEvent(
         ts = System.currentTimeMillis(),
         clientKey = clientKey,
@@ -307,6 +319,7 @@ class WebClientAnthropicHandler(
         durationMilliseconds = System.currentTimeMillis() - startedAtMilliseconds,
         status = status,
         error = error,
+        savedTokens = savedTokens,
     )
 
     private fun serverSentEventErrorBytes(message: String?): ByteArray {

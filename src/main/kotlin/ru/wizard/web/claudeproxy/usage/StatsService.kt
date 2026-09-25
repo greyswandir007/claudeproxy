@@ -11,6 +11,8 @@ interface StatsService {
         val outputTokens: Long,
         val cacheCreationTokens: Long,
         val cacheReadTokens: Long,
+        /** Кэш-чтения + токены, вырезанные инструментами экономии. */
+        val savedTokens: Long = 0,
     )
 
     data class GroupedUsage(

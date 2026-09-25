@@ -16,4 +16,6 @@ data class UsageEvent(
     /** HTTP-код; 0 = стрим оборван клиентом. */
     val status: Int,
     val error: String?,
+    /** Оценка токенов, сэкономленных инструментами экономии (обрезка и т.п.). */
+    val savedTokens: Long = 0,
 )

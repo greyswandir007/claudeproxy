@@ -35,8 +35,8 @@ class AsyncUsageRecorder(
                         """INSERT INTO usage_event
                            (ts, client_key, provider, model, upstream_model, stream,
                             input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens,
-                            duration_ms, status, error)
-                           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                            duration_ms, status, error, saved_tokens)
+                           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                         usageEvent.ts,
                         usageEvent.clientKey,
                         usageEvent.provider,
@@ -50,6 +50,7 @@ class AsyncUsageRecorder(
                         usageEvent.durationMilliseconds,
                         usageEvent.status,
                         usageEvent.error,
+                        usageEvent.savedTokens,
                     )
                 }
             } catch (exception: Exception) {
