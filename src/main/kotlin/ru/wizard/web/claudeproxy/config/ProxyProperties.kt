@@ -16,6 +16,7 @@ class ProxyProperties(
     var models: Models = Models(),
     var providers: List<Provider> = emptyList(),
     var dashboard: Dashboard = Dashboard(),
+    var requestCache: RequestCache = RequestCache(),
 ) {
     class Models(
         /** Белый список public-моделей; пусто = все модели всех провайдеров. */
@@ -34,6 +35,12 @@ class ProxyProperties(
             var password: String? = null,
         )
     }
+
+    /** Кэш повторяющихся запросов (TTL — настройка провайдера REQUEST_CACHE_TTL_MS). */
+    class RequestCache(
+        /** Максимум строк в request_cache; лишние вытесняются по LRU. */
+        var maxRows: Int = 1000,
+    )
 
     class Provider(
         var name: String = "",

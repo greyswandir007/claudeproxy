@@ -226,6 +226,7 @@ export const SETTING_CATALOG: SettingDefinition[] = [
   { key: 'CACHE_INJECTION', title: 'Экономия: инъекция кэш-маркеров', description: 'anthropic: cache_control на system/tools; openai: стабильный prompt_cache_key', valueType: 'BOOLEAN', placeholder: 'true' },
   { key: 'TRIM_OLD_TOOL_RESULTS', title: 'Экономия: обрезка старых tool_result', description: 'Старше последних 4 → «[trimmed]»', valueType: 'BOOLEAN', placeholder: 'true' },
   { key: 'DROP_OLD_TOOL_IMAGES', title: 'Экономия: удаление старых картинок', description: 'Старше последних 2 сообщений (~1600 токенов/шт)', valueType: 'BOOLEAN', placeholder: 'true' },
+  { key: 'REQUEST_CACHE_TTL_MS', title: 'Экономия: кэш повторов, TTL (мс)', description: 'Точный повтор запроса внутри окна отдаётся из кэша бесплатно; 0 — выключить кэш для провайдера', valueType: 'LONG', placeholder: '600000' },
 ]
 
 export const EFFORT_LEVELS = ['low', 'medium', 'high', 'xhigh', 'max'] as const

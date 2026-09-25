@@ -8,6 +8,7 @@ import kotlinx.coroutines.launch
 import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.stereotype.Service
 import ru.wizard.web.claudeproxy.db.DatabaseProvider
+import ru.wizard.web.claudeproxy.proxy.cache.RequestCacheService
 import ru.wizard.web.claudeproxy.usage.UsageEvent
 import ru.wizard.web.claudeproxy.usage.UsageRecorder
 import ru.wizard.web.claudeproxy.usage.WindowService
@@ -30,7 +31,10 @@ class AsyncUsageRecorder(
             try {
                 databaseProvider.execute {
                     windowService.ensureWindow(usageEvent.clientKey, usageEvent.ts)
-                    windowService.ensureProviderWindow(usageEvent.provider, usageEvent.ts)
+                    // Повторы из кэша не создают окно псевдо-провайдера 'cache'.
+                    if (usageEvent.provider != RequestCacheService.CACHE_PROVIDER_NAME) {
+                        windowService.ensureProviderWindow(usageEvent.provider, usageEvent.ts)
+                    }
                     jdbcTemplate.update(
                         """INSERT INTO usage_event
                            (ts, client_key, provider, model, upstream_model, stream,

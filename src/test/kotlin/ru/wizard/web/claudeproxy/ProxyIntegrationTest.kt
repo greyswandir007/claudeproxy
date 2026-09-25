@@ -7,6 +7,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
@@ -43,6 +44,12 @@ class ProxyIntegrationTest {
     @Autowired
     private lateinit var usageRetentionService: ru.wizard.web.claudeproxy.usage.UsageRetentionService
 
+    @Autowired
+    private lateinit var requestCacheService: ru.wizard.web.claudeproxy.proxy.cache.RequestCacheService
+
+    @Autowired
+    private lateinit var proxyProperties: ru.wizard.web.claudeproxy.config.ProxyProperties
+
     private lateinit var webTestClient: WebTestClient
 
     @BeforeEach
@@ -55,6 +62,7 @@ class ProxyIntegrationTest {
         jdbcTemplate.update("DELETE FROM usage_window")
         jdbcTemplate.update("DELETE FROM chat_message")
         jdbcTemplate.update("DELETE FROM chat_thread")
+        jdbcTemplate.update("DELETE FROM request_cache")
         jdbcTemplate.update("DELETE FROM api_key WHERE name <> 'test'")
     }
 
@@ -122,7 +130,7 @@ class ProxyIntegrationTest {
             .header("x-api-key", SEED_API_KEY)
             .contentType(MediaType.APPLICATION_JSON)
             .bodyValue(
-                """{"model":"fake-model","max_tokens":100,"stream":true,"messages":[{"role":"user","content":"привет"}]}""",
+                """{"model":"fake-model","max_tokens":100,"stream":true,"messages":[{"role":"user","content":"привет-stream"}]}""",
             )
             .exchange().expectStatus().isOk
             .expectHeader().contentTypeCompatibleWith(MediaType.TEXT_EVENT_STREAM)
@@ -135,6 +143,256 @@ class ProxyIntegrationTest {
         assertEquals(10L, asLong(usageEventRow["input_tokens"]))
         assertEquals(20L, asLong(usageEventRow["output_tokens"]))
         assertEquals(5L, asLong(usageEventRow["cache_read_tokens"]))
+    }
+
+    @Test
+    fun `повтор не-stream запроса отдаётся из кэша бесплатно`() {
+        val body =
+            """{"model":"fake-model","max_tokens":100,"messages":[{"role":"user","content":"кэш-повтор"}]}"""
+        val firstResponse = webTestClient.post().uri("/v1/messages")
+            .header("x-api-key", SEED_API_KEY)
+            .contentType(MediaType.APPLICATION_JSON)
+            .bodyValue(body)
+            .exchange().expectStatus().isOk
+            .expectBody(String::class.java).returnResult().responseBody!!
+
+        // первый проход платный: обычное usage-событие провайдера
+        awaitUsageEventRow("provider = 'fake' AND stream = 0")
+        awaitRequestCacheRow("model = 'fake-model'")
+
+        val secondResponse = webTestClient.post().uri("/v1/messages")
+            .header("x-api-key", SEED_API_KEY)
+            .contentType(MediaType.APPLICATION_JSON)
+            .bodyValue(body)
+            .exchange().expectStatus().isOk
+            .expectBody(String::class.java).returnResult().responseBody!!
+
+        assertEquals(firstResponse, secondResponse)
+
+        // повтор бесплатный: провайдер 'cache', токены 0, saved_tokens = полный объём (10 + 20)
+        val cacheRow = awaitUsageEventRow("provider = 'cache' AND stream = 0")
+        assertEquals(0L, asLong(cacheRow["input_tokens"]))
+        assertEquals(0L, asLong(cacheRow["output_tokens"]))
+        assertEquals(30L, asLong(cacheRow["saved_tokens"]))
+        // к провайдеру ушёл только первый запрос
+        assertEquals(
+            1,
+            jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM usage_event WHERE provider = 'fake' AND stream = 0", Int::class.java,
+            ),
+        )
+    }
+
+    @Test
+    fun `повтор stream запроса отдаётся из кэша`() {
+        val body =
+            """{"model":"fake-model","max_tokens":100,"stream":true,"messages":[{"role":"user","content":"кэш-стрим"}]}"""
+        val firstResponse = webTestClient.post().uri("/v1/messages")
+            .header("x-api-key", SEED_API_KEY)
+            .contentType(MediaType.APPLICATION_JSON)
+            .bodyValue(body)
+            .exchange().expectStatus().isOk
+            .expectHeader().contentTypeCompatibleWith(MediaType.TEXT_EVENT_STREAM)
+            .expectBody(String::class.java).returnResult().responseBody!!
+
+        assertTrue(firstResponse!!.contains("message_stop"))
+        awaitUsageEventRow("provider = 'fake' AND stream = 1")
+        awaitRequestCacheRow("model = 'fake-model' AND response_format = 'SSE'")
+
+        val secondResponse = webTestClient.post().uri("/v1/messages")
+            .header("x-api-key", SEED_API_KEY)
+            .contentType(MediaType.APPLICATION_JSON)
+            .bodyValue(body)
+            .exchange().expectStatus().isOk
+            .expectHeader().contentTypeCompatibleWith(MediaType.TEXT_EVENT_STREAM)
+            .expectBody(String::class.java).returnResult().responseBody!!
+
+        assertTrue(secondResponse!!.contains("message_start"))
+        assertTrue(secondResponse.contains("message_stop"))
+        assertEquals(firstResponse, secondResponse)
+
+        val cacheRow = awaitUsageEventRow("provider = 'cache' AND stream = 1")
+        assertEquals(30L, asLong(cacheRow["saved_tokens"]))
+        assertEquals(
+            1,
+            jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM usage_event WHERE provider = 'fake' AND stream = 1", Int::class.java,
+            ),
+        )
+    }
+
+    @Test
+    fun `кэш уважает TTL выключение истечение канонический ключ и LRU`() = runBlocking {
+        // канонический ключ: порядок ключей JSON не влияет на хэш
+        val rootDirect = objectMapper.readTree("""{"model":"x","max_tokens":10}""")
+        val rootReordered = objectMapper.readTree("""{"max_tokens":10,"model":"x"}""")
+        assertEquals(
+            requestCacheService.buildCacheKey("/v1/messages", rootDirect).hash,
+            requestCacheService.buildCacheKey("/v1/messages", rootReordered).hash,
+        )
+
+        // stream и metadata в ключ не входят: стримовый и не-стримовый повтор делят запись
+        val rootStream = objectMapper.readTree("""{"model":"x","max_tokens":10,"stream":true}""")
+        val rootMetadata =
+            objectMapper.readTree("""{"model":"x","max_tokens":10,"metadata":{"user_id":"u1"}}""")
+        assertEquals(
+            requestCacheService.buildCacheKey("/v1/messages", rootDirect).hash,
+            requestCacheService.buildCacheKey("/v1/messages", rootStream).hash,
+        )
+        assertEquals(
+            requestCacheService.buildCacheKey("/v1/messages", rootDirect).hash,
+            requestCacheService.buildCacheKey("/v1/messages", rootMetadata).hash,
+        )
+
+        // TTL 0 = кэш выключен: строка не пишется вовсе
+        val disabledKey = requestCacheService.buildCacheKey("/v1/messages", rootDirect)
+        requestCacheService.storeAsync(
+            ru.wizard.web.claudeproxy.proxy.cache.RequestCacheService.CachedEntry(
+                cacheKey = disabledKey,
+                responseBody = "{}",
+                responseFormat = ru.wizard.web.claudeproxy.proxy.cache.RequestCacheService.ResponseFormat.JSON,
+                model = "x",
+                provider = "fake",
+                inputTokens = 1,
+                outputTokens = 2,
+                timeToLiveMilliseconds = 0,
+            ),
+        )
+
+        // истёкшая строка выпадает из выдачи
+        val expiredKey = requestCacheService.buildCacheKey(
+            "/v1/messages",
+            objectMapper.readTree("""{"model":"expired"}"""),
+        )
+        requestCacheService.storeAsync(
+            ru.wizard.web.claudeproxy.proxy.cache.RequestCacheService.CachedEntry(
+                cacheKey = expiredKey,
+                responseBody = "{}",
+                responseFormat = ru.wizard.web.claudeproxy.proxy.cache.RequestCacheService.ResponseFormat.JSON,
+                model = "expired",
+                provider = "fake",
+                inputTokens = 0,
+                outputTokens = 0,
+                timeToLiveMilliseconds = 60_000,
+            ),
+        )
+        withTimeout(5_000) {
+            while (requestCacheService.lookup(expiredKey) == null) delay(100)
+        }
+        jdbcTemplate.update("UPDATE request_cache SET expires_at = ? WHERE model = 'expired'", System.currentTimeMillis() - 1)
+        assertNull(requestCacheService.lookup(expiredKey))
+
+        // LRU: при лимите maxRows остаются самые свежие строки
+        val originalMaxRows = proxyProperties.requestCache.maxRows
+        proxyProperties.requestCache.maxRows = 3
+        try {
+            repeat(5) { index ->
+                val key = requestCacheService.buildCacheKey(
+                    "/v1/messages",
+                    objectMapper.readTree("""{"model":"lru-$index"}"""),
+                )
+                requestCacheService.storeAsync(
+                    ru.wizard.web.claudeproxy.proxy.cache.RequestCacheService.CachedEntry(
+                        cacheKey = key,
+                        responseBody = "{}",
+                        responseFormat = ru.wizard.web.claudeproxy.proxy.cache.RequestCacheService.ResponseFormat.JSON,
+                        model = "lru-$index",
+                        provider = "fake",
+                        inputTokens = 0,
+                        outputTokens = 0,
+                        timeToLiveMilliseconds = 600_000,
+                    ),
+                )
+                withTimeout(5_000) {
+                    while (requestCacheService.lookup(key) == null) delay(100)
+                }
+            }
+            withTimeout(5_000) {
+                while (jdbcTemplate.queryForObject("SELECT COUNT(*) FROM request_cache", Int::class.java) != 3) delay(100)
+            }
+            assertEquals(
+                0,
+                jdbcTemplate.queryForObject("SELECT COUNT(*) FROM request_cache WHERE model = 'lru-0'", Int::class.java),
+            )
+            assertEquals(
+                1,
+                jdbcTemplate.queryForObject("SELECT COUNT(*) FROM request_cache WHERE model = 'lru-4'", Int::class.java),
+            )
+        } finally {
+            proxyProperties.requestCache.maxRows = originalMaxRows
+        }
+
+        // TTL 0 ничего не записал — строк с моделью x нет
+        assertEquals(
+            0,
+            jdbcTemplate.queryForObject("SELECT COUNT(*) FROM request_cache WHERE model = 'x'", Int::class.java),
+        )
+    }
+
+    @Test
+    fun `кросс-режимный повтор из кэша конвертирует формат`() {
+        // первый проход не-стримовый: в кэше JSON
+        val body =
+            """{"model":"fake-model","max_tokens":100,"messages":[{"role":"user","content":"кэш-кросс-json"}]}"""
+        webTestClient.post().uri("/v1/messages")
+            .header("x-api-key", SEED_API_KEY)
+            .contentType(MediaType.APPLICATION_JSON)
+            .bodyValue(body)
+            .exchange().expectStatus().isOk
+        awaitUsageEventRow("provider = 'fake' AND stream = 0")
+        awaitRequestCacheRow("response_format = 'JSON'")
+
+        // повтор стримовый (stream в ключ не входит): SSE синтезируется из JSON
+        val streamRepeatBody =
+            """{"model":"fake-model","max_tokens":100,"stream":true,"messages":[{"role":"user","content":"кэш-кросс-json"}]}"""
+        val streamRepeat = webTestClient.post().uri("/v1/messages")
+            .header("x-api-key", SEED_API_KEY)
+            .contentType(MediaType.APPLICATION_JSON)
+            .bodyValue(streamRepeatBody)
+            .exchange().expectStatus().isOk
+            .expectHeader().contentTypeCompatibleWith(MediaType.TEXT_EVENT_STREAM)
+            .expectBody(String::class.java).returnResult().responseBody!!
+        assertTrue(streamRepeat.contains("event: message_start"))
+        assertTrue(streamRepeat.contains("hello"))
+        assertTrue(streamRepeat.contains("event: message_stop"))
+
+        // обратное направление: первый проход стримовый — в кэше SSE-транскрипт
+        val streamBody =
+            """{"model":"fake-model","max_tokens":100,"stream":true,"messages":[{"role":"user","content":"кэш-кросс-sse"}]}"""
+        webTestClient.post().uri("/v1/messages")
+            .header("x-api-key", SEED_API_KEY)
+            .contentType(MediaType.APPLICATION_JSON)
+            .bodyValue(streamBody)
+            .exchange().expectStatus().isOk
+        awaitUsageEventRow("provider = 'fake' AND stream = 1 AND model = 'fake-model'")
+        awaitRequestCacheRow("response_format = 'SSE'")
+
+        // повтор не-стримовый (metadata в ключ не входит): JSON собирается из SSE
+        val jsonRepeatBody =
+            """{"metadata":{"user_id":"someone"},"model":"fake-model","max_tokens":100,"messages":[{"role":"user","content":"кэш-кросс-sse"}]}"""
+        val jsonRepeat = webTestClient.post().uri("/v1/messages")
+            .header("x-api-key", SEED_API_KEY)
+            .contentType(MediaType.APPLICATION_JSON)
+            .bodyValue(jsonRepeatBody)
+            .exchange().expectStatus().isOk
+            .expectHeader().contentTypeCompatibleWith(MediaType.APPLICATION_JSON)
+            .expectBody(String::class.java).returnResult().responseBody!!
+        assertTrue(jsonRepeat.contains("\"привет\""))
+        assertTrue(jsonRepeat.contains("\"stop_reason\":\"end_turn\""))
+
+        // оба повтора бесплатны: к провайдеру ушли только два первых прохода
+        assertEquals(
+            2,
+            jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM usage_event WHERE provider = 'fake'", Int::class.java,
+            ),
+        )
+        assertEquals(
+            2,
+            jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM usage_event WHERE provider = 'cache'", Int::class.java,
+            ),
+        )
     }
 
     @Test
@@ -194,7 +452,13 @@ class ProxyIntegrationTest {
         val responseBody = webTestClient.post().uri("/v1/messages")
             .header("x-api-key", SEED_API_KEY)
             .contentType(MediaType.APPLICATION_JSON)
-            .bodyValue(CLAUDE_REQUEST_WITH_TOOLS.replace("\"max_tokens\":200", "\"max_tokens\":200,\"stream\":true"))
+            .bodyValue(
+                CLAUDE_REQUEST_WITH_TOOLS
+                    .replace("\"max_tokens\":200", "\"max_tokens\":200,\"stream\":true")
+                    // уникальное тело: stream не входит в ключ кэша, а не-stream вариант того же
+                    // запроса кэшируется отдельным тестом
+                    .replace("Погода в Париже?", "Погода в Риме?"),
+            )
             .exchange().expectStatus().isOk
             .expectHeader().contentTypeCompatibleWith(MediaType.TEXT_EVENT_STREAM)
             .expectBody(String::class.java).returnResult().responseBody!!
@@ -281,12 +545,12 @@ class ProxyIntegrationTest {
 
     @Test
     fun `статистика summary, by-model, окна и timeline`() {
-        // генерируем usage-событие
+        // генерируем usage-событие (тело уникально, чтобы не попадать в кэш повторов других тестов)
         webTestClient.post().uri("/v1/messages")
             .header("x-api-key", SEED_API_KEY)
             .contentType(MediaType.APPLICATION_JSON)
             .bodyValue(
-                """{"model":"fake-model","max_tokens":100,"messages":[{"role":"user","content":"привет"}]}""",
+                """{"model":"fake-model","max_tokens":100,"messages":[{"role":"user","content":"статистика"}]}""",
             )
             .exchange().expectStatus().isOk
         awaitUsageEventRow("stream = 0")
@@ -729,7 +993,7 @@ class ProxyIntegrationTest {
         val responseBody = webTestClient.post().uri("/v1/chat/completions")
             .header("Authorization", "Bearer $SEED_API_KEY")
             .contentType(MediaType.APPLICATION_JSON)
-            .bodyValue("""{"model":"fake-model","max_tokens":100,"messages":[{"role":"user","content":"привет"}]}""")
+            .bodyValue("""{"model":"fake-model","max_tokens":100,"messages":[{"role":"user","content":"привет-openai"}]}""")
             .exchange().expectStatus().isOk
             .expectBody(String::class.java).returnResult().responseBody!!
 
@@ -1228,6 +1492,19 @@ class ProxyIntegrationTest {
     }
 
     private fun asLong(value: Any?): Long = (value as Number).toLong()
+
+    /** Ждёт, пока в request_cache появится строка под условием (запись в кэш асинхронная). */
+    private fun awaitRequestCacheRow(condition: String): Map<String, Any?> = runBlocking {
+        withTimeout(5_000) {
+            while (true) {
+                val cacheRows = jdbcTemplate.queryForList("SELECT * FROM request_cache WHERE $condition")
+                if (cacheRows.isNotEmpty()) return@withTimeout cacheRows.first()
+                delay(100)
+            }
+            @Suppress("UNREACHABLE_CODE")
+            error("недостижимо")
+        }
+    }
 
     private fun awaitUsageEventRows(condition: String, expectedCount: Int = 1): List<Map<String, Any?>> = runBlocking {
         withTimeout(5_000) {

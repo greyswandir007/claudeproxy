@@ -18,6 +18,8 @@ import ru.wizard.web.claudeproxy.auth.ApiKeyAuthFilter
 import ru.wizard.web.claudeproxy.proxy.AnthropicHandler
 import ru.wizard.web.claudeproxy.proxy.ProviderRequestAdjuster
 import ru.wizard.web.claudeproxy.proxy.TokenSavingAdjuster
+import ru.wizard.web.claudeproxy.proxy.cache.CachedResponsePresenter
+import ru.wizard.web.claudeproxy.proxy.cache.RequestCacheService
 import ru.wizard.web.claudeproxy.providers.ProviderOAuthTokenService
 import ru.wizard.web.claudeproxy.routing.RouteCircuitBreaker
 import ru.wizard.web.claudeproxy.proxy.SseUsageSniffer
@@ -42,6 +44,7 @@ class WebClientAnthropicHandler(
     private val tokenSavingAdjuster: TokenSavingAdjuster,
     private val oauthTokenService: ProviderOAuthTokenService,
     private val routeCircuitBreaker: RouteCircuitBreaker,
+    private val requestCacheService: RequestCacheService,
 ) : AnthropicHandler {
     private val logger = KotlinLogging.logger {}
 
@@ -54,6 +57,22 @@ class WebClientAnthropicHandler(
     ): ResponseEntity<Flux<DataBuffer>> {
         val stream = requestRoot.path("stream").asBoolean(false)
         val clientKey = exchange.getAttribute(ApiKeyAuthFilter.CLIENT_KEY_ATTRIBUTE) ?: "unknown"
+        // кэш повторяющихся запросов: точный повтор отдаётся без похода к провайдеру
+        val cacheKey =
+            if (recordUsage) requestCacheService.buildCacheKey(upstreamPath, requestRoot) else null
+        if (cacheKey != null) {
+            requestCacheService.lookup(cacheKey)?.let { cached ->
+                usageRecorder.recordAsync(CachedResponsePresenter.usageEvent(exchange, requestRoot, cached))
+                return CachedResponsePresenter.buildResponse(exchange, cached, stream)
+            }
+            // single-flight: параллельный такой же проход мог записать ответ — ждём его
+            while (true) {
+                val parallelResult = requestCacheService.awaitParallelFlight(cacheKey)
+                if (parallelResult == null) break
+                usageRecorder.recordAsync(CachedResponsePresenter.usageEvent(exchange, requestRoot, parallelResult))
+                return CachedResponsePresenter.buildResponse(exchange, parallelResult, stream)
+            }
+        }
         // маршруты в кулдауне пропускаем; если кулдаун у всех — пробуем все
         val activeRoutes = routes.filter { routeCircuitBreaker.isAvailable(it.provider.name) }
             .ifEmpty { routes }
@@ -69,12 +88,19 @@ class WebClientAnthropicHandler(
                     Flux.defer {
                         attemptStream(
                             exchange, activeRoutes, 0, requestRoot, upstreamPath,
-                            recordUsage, clientKey, authorizationHeader,
+                            recordUsage, clientKey, authorizationHeader, cacheKey,
                         )
+                    }.doFinally {
+                        // single-flight: первый проход завершился (записал ответ или нет)
+                        if (cacheKey != null) requestCacheService.endFlight(cacheKey)
                     },
                 )
         } else {
-            attemptSequential(exchange, activeRoutes, requestRoot, upstreamPath, recordUsage, clientKey, authorizationHeader)
+            try {
+                attemptSequential(exchange, activeRoutes, requestRoot, upstreamPath, recordUsage, clientKey, authorizationHeader, cacheKey)
+            } finally {
+                if (cacheKey != null) requestCacheService.endFlight(cacheKey)
+            }
         }
     }
 
@@ -95,6 +121,7 @@ class WebClientAnthropicHandler(
         recordUsage: Boolean,
         clientKey: String,
         authorizationHeader: Pair<String, String>?,
+        cacheKey: RequestCacheService.RequestCacheKey?,
     ): ResponseEntity<Flux<DataBuffer>> {
         for ((index, route) in routes.withIndex()) {
             val startedAtMilliseconds = System.currentTimeMillis()
@@ -132,7 +159,22 @@ class WebClientAnthropicHandler(
                             savedTokens = savedTokens,
                         ),
                     )
-                }
+                        // первый проход успешен — сохраняем ответ в кэш повторов
+                        if (cacheKey != null && responseEntity.statusCode.is2xxSuccessful()) {
+                            requestCacheService.storeAsync(
+                                RequestCacheService.CachedEntry(
+                                    cacheKey = cacheKey,
+                                    responseBody = responseEntity.body ?: "",
+                                    responseFormat = RequestCacheService.ResponseFormat.JSON,
+                                    model = route.mapping.publicName,
+                                    provider = route.provider.name,
+                                    inputTokens = usageAccumulator.inputTokens,
+                                    outputTokens = usageAccumulator.outputTokens,
+                                    timeToLiveMilliseconds = RequestCacheService.timeToLiveMilliseconds(route.provider),
+                                ),
+                            )
+                        }
+                    }
                 if (responseEntity.statusCode.is2xxSuccessful()) {
                     routeCircuitBreaker.success(route.provider.name)
                 }
@@ -180,11 +222,14 @@ class WebClientAnthropicHandler(
         recordUsage: Boolean,
         clientKey: String,
         authorizationHeader: Pair<String, String>?,
+        cacheKey: RequestCacheService.RequestCacheKey?,
     ): Flux<DataBuffer> {
         val route = routes[index]
         val startedAtMilliseconds = System.currentTimeMillis()
         val usageSniffer = SseUsageSniffer(objectMapper)
         var emittedAnything = false
+        // Накопление полного SSE-транскрипта для кэша повторов (null — не кэшируем).
+        val transcript = StringBuilder()
         val (callSpecification, savedTokens) =
             buildCall(exchange, route, requestRoot, upstreamPath, authorizationHeader)
         return callSpecification
@@ -196,9 +241,9 @@ class WebClientAnthropicHandler(
             .doOnNext { buffer ->
                 emittedAnything = true
                 // peek без потребления: readPosition не двигается
-                usageSniffer.onChunk(
-                    buffer.toString(buffer.readPosition(), buffer.readableByteCount(), UTF_8),
-                )
+                val chunkText = buffer.toString(buffer.readPosition(), buffer.readableByteCount(), UTF_8)
+                usageSniffer.onChunk(chunkText)
+                if (cacheKey != null) transcript.append(chunkText)
             }
             .doOnError { error ->
                 if (recordUsage) {
@@ -234,6 +279,21 @@ class WebClientAnthropicHandler(
                         ),
                     )
                 }
+                if (cacheKey != null && signal == SignalType.ON_COMPLETE) {
+                    // полный SSE-транскрипт успешного прохода — в кэш повторов
+                    requestCacheService.storeAsync(
+                        RequestCacheService.CachedEntry(
+                            cacheKey = cacheKey,
+                            responseBody = transcript.toString(),
+                            responseFormat = RequestCacheService.ResponseFormat.SSE,
+                            model = route.mapping.publicName,
+                            provider = route.provider.name,
+                            inputTokens = usageSniffer.usageAccumulator.inputTokens,
+                            outputTokens = usageSniffer.usageAccumulator.outputTokens,
+                            timeToLiveMilliseconds = RequestCacheService.timeToLiveMilliseconds(route.provider),
+                        ),
+                    )
+                }
             }
             .onErrorResume { error ->
                 if (UpstreamRetryPolicy.isRetryable(error)) {
@@ -253,7 +313,7 @@ class WebClientAnthropicHandler(
                     }
                     attemptStream(
                         exchange, routes, index + 1, requestRoot, upstreamPath,
-                        recordUsage, clientKey, authorizationHeader,
+                        recordUsage, clientKey, authorizationHeader, cacheKey,
                     )
                 } else {
                     logger.error(error) { "Stream from provider '${route.provider.name}' aborted" }

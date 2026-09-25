@@ -22,6 +22,8 @@ import ru.wizard.web.claudeproxy.proxy.UpstreamError
 import ru.wizard.web.claudeproxy.proxy.UpstreamRetryPolicy
 import ru.wizard.web.claudeproxy.proxy.ProviderRequestAdjuster
 import ru.wizard.web.claudeproxy.proxy.TokenSavingAdjuster
+import ru.wizard.web.claudeproxy.proxy.cache.CachedResponsePresenter
+import ru.wizard.web.claudeproxy.proxy.cache.RequestCacheService
 import ru.wizard.web.claudeproxy.providers.ProviderOAuthTokenService
 import ru.wizard.web.claudeproxy.routing.RouteCircuitBreaker
 import ru.wizard.web.claudeproxy.proxy.openai.OpenAiHandler
@@ -44,8 +46,14 @@ class WebClientOpenAiHandler(
     private val tokenSavingAdjuster: TokenSavingAdjuster,
     private val oauthTokenService: ProviderOAuthTokenService,
     private val routeCircuitBreaker: RouteCircuitBreaker,
+    private val requestCacheService: RequestCacheService,
 ) : OpenAiHandler {
     private val logger = KotlinLogging.logger {}
+
+    private companion object {
+        /** Путь-псевдоним для ключа кэша: общий с anthropic-хендлером — один кэш на оба пути. */
+        const val REQUEST_CACHE_UPSTREAM_PATH = "/v1/messages"
+    }
 
     private val requestTranslator = OpenAiRequestTranslator(objectMapper)
     private val responseTranslator = OpenAiResponseTranslator(objectMapper)
@@ -62,6 +70,22 @@ class WebClientOpenAiHandler(
     ): ResponseEntity<Flux<DataBuffer>> {
         val stream = requestRoot.path("stream").asBoolean(false)
         val clientKey = exchange.getAttribute(ApiKeyAuthFilter.CLIENT_KEY_ATTRIBUTE) ?: "unknown"
+        // кэш повторяющихся запросов: точный повтор отдаётся без похода к провайдеру
+        val cacheKey =
+            if (recordUsage) requestCacheService.buildCacheKey(REQUEST_CACHE_UPSTREAM_PATH, requestRoot) else null
+        if (cacheKey != null) {
+            requestCacheService.lookup(cacheKey)?.let { cached ->
+                usageRecorder.recordAsync(CachedResponsePresenter.usageEvent(exchange, requestRoot, cached))
+                return CachedResponsePresenter.buildResponse(exchange, cached, stream)
+            }
+            // single-flight: параллельный такой же проход мог записать ответ — ждём его
+            while (true) {
+                val parallelResult = requestCacheService.awaitParallelFlight(cacheKey)
+                if (parallelResult == null) break
+                usageRecorder.recordAsync(CachedResponsePresenter.usageEvent(exchange, requestRoot, parallelResult))
+                return CachedResponsePresenter.buildResponse(exchange, parallelResult, stream)
+            }
+        }
         // маршруты в кулдауне пропускаем; если кулдаун у всех — пробуем все
         val activeRoutes = routes.filter { routeCircuitBreaker.isAvailable(it.provider.name) }
             .ifEmpty { routes }
@@ -79,11 +103,18 @@ class WebClientOpenAiHandler(
                 .header(HttpHeaders.CACHE_CONTROL, "no-cache")
                 .body(
                     Flux.defer {
-                        attemptStream(exchange, activeRoutes, 0, requestRoot, recordUsage, clientKey, bearerToken)
+                        attemptStream(exchange, activeRoutes, 0, requestRoot, recordUsage, clientKey, bearerToken, cacheKey)
+                    }.doFinally {
+                        // single-flight: первый проход завершился (записал ответ или нет)
+                        if (cacheKey != null) requestCacheService.endFlight(cacheKey)
                     },
                 )
         } else {
-            attemptSequential(exchange, activeRoutes, requestRoot, recordUsage, clientKey, bearerToken)
+            try {
+                attemptSequential(exchange, activeRoutes, requestRoot, recordUsage, clientKey, bearerToken, cacheKey)
+            } finally {
+                if (cacheKey != null) requestCacheService.endFlight(cacheKey)
+            }
         }
     }
 
@@ -111,6 +142,7 @@ class WebClientOpenAiHandler(
         recordUsage: Boolean,
         clientKey: String,
         bearerToken: String,
+        cacheKey: RequestCacheService.RequestCacheKey?,
     ): ResponseEntity<Flux<DataBuffer>> {
         for ((index, route) in routes.withIndex()) {
             val startedAtMilliseconds = System.currentTimeMillis()
@@ -145,6 +177,21 @@ class WebClientOpenAiHandler(
                         ),
                     )
                     routeCircuitBreaker.success(route.provider.name)
+                    // первый проход успешен — сохраняем ответ в кэш повторов
+                    if (cacheKey != null && responseEntity.statusCode.is2xxSuccessful()) {
+                        requestCacheService.storeAsync(
+                            RequestCacheService.CachedEntry(
+                                cacheKey = cacheKey,
+                                responseBody = translated.responseBody,
+                                responseFormat = RequestCacheService.ResponseFormat.JSON,
+                                model = route.mapping.publicName,
+                                provider = route.provider.name,
+                                inputTokens = translated.usageAccumulator.inputTokens,
+                                outputTokens = translated.usageAccumulator.outputTokens,
+                                timeToLiveMilliseconds = RequestCacheService.timeToLiveMilliseconds(route.provider),
+                            ),
+                        )
+                    }
                     return ResponseEntity.ok()
                         .contentType(MediaType.APPLICATION_JSON)
                         .body(
@@ -209,11 +256,14 @@ class WebClientOpenAiHandler(
         recordUsage: Boolean,
         clientKey: String,
         bearerToken: String,
+        cacheKey: RequestCacheService.RequestCacheKey?,
     ): Flux<DataBuffer> {
         val route = routes[index]
         val startedAtMilliseconds = System.currentTimeMillis()
         val sseTranslator = OpenAiSseTranslator(objectMapper, route.mapping.publicName)
         var emittedAnything = false
+        // Накопление полного SSE-транскрипта для кэша повторов (null — не кэшируем).
+        val transcript = ArrayList<String>()
         val (callSpecification, savedTokens) = buildCall(route, requestRoot, bearerToken)
         return callSpecification
             .retrieve()
@@ -226,6 +276,7 @@ class WebClientOpenAiHandler(
                 if (events.isNotEmpty()) {
                     emittedAnything = true
                 }
+                if (cacheKey != null) transcript.addAll(events)
                 Flux.fromIterable(events)
             }
             .doOnError { error ->
@@ -262,6 +313,21 @@ class WebClientOpenAiHandler(
                         ),
                     )
                 }
+                if (cacheKey != null && signal == SignalType.ON_COMPLETE) {
+                    // полный SSE-транскрипт успешного прохода — в кэш повторов
+                    requestCacheService.storeAsync(
+                        RequestCacheService.CachedEntry(
+                            cacheKey = cacheKey,
+                            responseBody = transcript.joinToString(separator = ""),
+                            responseFormat = RequestCacheService.ResponseFormat.SSE,
+                            model = route.mapping.publicName,
+                            provider = route.provider.name,
+                            inputTokens = sseTranslator.usageAccumulator.inputTokens,
+                            outputTokens = sseTranslator.usageAccumulator.outputTokens,
+                            timeToLiveMilliseconds = RequestCacheService.timeToLiveMilliseconds(route.provider),
+                        ),
+                    )
+                }
             }
             .map { eventText -> eventText.toByteArray(UTF_8) }
             .map { eventBytes -> exchange.response.bufferFactory().wrap(eventBytes) }
@@ -281,7 +347,7 @@ class WebClientOpenAiHandler(
                         "Route '${route.provider.name}/${route.mapping.upstreamName}' failed before " +
                             "first event (${shortError(error)}) - switching to next route"
                     }
-                    attemptStream(exchange, routes, index + 1, requestRoot, recordUsage, clientKey, bearerToken)
+                    attemptStream(exchange, routes, index + 1, requestRoot, recordUsage, clientKey, bearerToken, cacheKey)
                 } else {
                     logger.error(error) { "Stream from provider '${route.provider.name}' aborted" }
                     Flux.just(

@@ -94,6 +94,13 @@ object ProviderSettingCatalog {
             valueType = ValueType.BOOLEAN,
             placeholder = "true",
         ),
+        SettingDefinition(
+            key = "REQUEST_CACHE_TTL_MS",
+            title = "Экономия: кэш повторов, TTL (мс)",
+            description = "Точный повтор запроса внутри окна отдаётся из кэша бесплатно, без похода к провайдеру; 0 — выключить кэш для провайдера",
+            valueType = ValueType.LONG,
+            placeholder = "600000",
+        ),
     )
 
     private val byKey = definitions.associateBy { it.key }

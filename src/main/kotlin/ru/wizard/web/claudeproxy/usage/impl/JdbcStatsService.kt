@@ -202,7 +202,7 @@ class JdbcStatsService(
                    LEFT JOIN usage_event e
                      ON e.provider = w.provider_name AND e.ts >= w.started_at AND e.ts < w.ends_at
                    GROUP BY w.provider_name, w.started_at, w.ends_at
-                   ORDER BY w.started_at DESC
+                   ORDER BY MAX(e.ts) DESC, w.started_at DESC, w.provider_name ASC
                    LIMIT ?""",
                 { resultSet, _ ->
                     StatsService.ProviderWindowSummary(
