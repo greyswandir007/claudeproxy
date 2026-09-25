@@ -28,6 +28,16 @@ interface StatsService {
         val startedAtMilliseconds: Long,
         val endsAtMilliseconds: Long,
         val totals: UsageTotals,
+        /** Провайдеры, обслужившие запросы этого окна ключа (для истории окон). */
+        val providers: List<String> = emptyList(),
+    )
+
+    /** Окно провайдера (независимый отсчёт от первого обращения после простоя). */
+    data class ProviderWindowSummary(
+        val providerName: String,
+        val startedAtMilliseconds: Long,
+        val endsAtMilliseconds: Long,
+        val totals: UsageTotals,
     )
 
     data class RangeSummary(
@@ -61,6 +71,9 @@ interface StatsService {
     suspend fun byClientKey(range: String): List<GroupedUsage>
 
     suspend fun windowHistory(clientKey: String, limit: Int): List<WindowSummary>
+
+    /** История окон провайдеров (у каждого свой отсчёт), свежие сверху. */
+    suspend fun providerWindowHistory(limit: Int): List<ProviderWindowSummary>
 
     /** Бакеты hour|day; from/to по умолчанию — последние 7 и 30 дней соответственно. */
     suspend fun timeline(

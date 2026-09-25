@@ -316,10 +316,19 @@ class ProxyIntegrationTest {
             .expectBody()
             .jsonPath("$.startedAtMilliseconds").isNumber
 
+        // в истории окон ключа — перечень провайдеров, обслуживших окно
         webTestClient.get().uri("/api/windows?key=test&limit=5")
             .exchange().expectStatus().isOk
             .expectBody()
             .jsonPath("$[0].totals.inputTokens").isEqualTo(10)
+            .jsonPath("$[0].providers[0]").isEqualTo("fake")
+
+        // история окон провайдеров — независимый отсчёт у каждого
+        webTestClient.get().uri("/api/provider-windows?limit=5")
+            .exchange().expectStatus().isOk
+            .expectBody()
+            .jsonPath("$[?(@.providerName == 'fake')].totals.inputTokens")
+            .isEqualTo(10)
 
         webTestClient.get().uri("/api/timeline?bucket=hour")
             .exchange().expectStatus().isOk

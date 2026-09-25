@@ -1,7 +1,8 @@
+import { useState } from 'react'
 import {
-  Area,
-  AreaChart,
   CartesianGrid,
+  Line,
+  LineChart,
   ReferenceLine,
   ResponsiveContainer,
   Tooltip,
@@ -10,7 +11,6 @@ import {
 } from 'recharts'
 import type {
   GroupedTimelinePoint,
-  TimelinePoint,
   WindowBoundary,
 } from '../api/client'
 import { formatDay, formatTime, formatTokens } from '../format'
@@ -36,9 +36,8 @@ const TOTAL_SERIES = [
   { key: 'cacheCreationTokens', label: 'Кэш-запись', color: '#c98500' },
 ] as const
 
-const SURFACE = '#1a1a19'
-const MUTED_INK = '#898781'
 const GRIDLINE = '#2c2c2a'
+const MUTED_INK = '#898781'
 
 interface TooltipEntry {
   name?: string
@@ -70,14 +69,10 @@ function ChartTooltip({
   )
 }
 
-export interface TimelineChartData {
-  total: TimelinePoint[]
-  grouped: GroupedTimelinePoint[]
-  labels: string[]
-}
-
-// Таймлайн расхода: общий (стек вход/выход/кэш) или срез по моделям/провайдерам;
-// на дневном (часовом) виде — вертикальные границы 5-часовых окон ключа.
+/**
+ * Таймлайн расхода: линии без заливки; наведение/клик по легенде подсвечивает
+ * одну серию и затемняет остальные. На часовом виде — границы 5-часовых окон.
+ */
 export default function TimelineChart({
   data,
   labels,
@@ -89,6 +84,12 @@ export default function TimelineChart({
   bucket: 'hour' | 'day'
   boundaries: WindowBoundary[]
 }) {
+  const [hoveredSeries, setHoveredSeries] = useState<string | null>(null)
+  const [isolatedSeries, setIsolatedSeries] = useState<string | null>(null)
+  const focus = isolatedSeries ?? hoveredSeries
+  // активная серия: 1 — фокус, DIMMED — остальные
+  const opacityOf = (key: string) => (focus === null || focus === key ? 1 : 0.15)
+
   if (data.length === 0) {
     return (
       <section className="card chart-card">
@@ -106,16 +107,31 @@ export default function TimelineChart({
         )}
       </h2>
       <div className="chart-container">
-        <div className="chart-legend" aria-hidden="true">
+        <div className="chart-legend">
           {labels.map((series) => (
-            <span key={series.key} className="chart-legend-item">
+            <span
+              key={series.key}
+              className={
+                focus === series.key
+                  ? 'chart-legend-item chart-legend-focus'
+                  : focus === null
+                    ? 'chart-legend-item'
+                    : 'chart-legend-item chart-legend-dimmed'
+              }
+              onMouseEnter={() => setHoveredSeries(series.key)}
+              onMouseLeave={() => setHoveredSeries(null)}
+              onClick={() =>
+                setIsolatedSeries((current) => (current === series.key ? null : series.key))
+              }
+              title="клик — показать только эту серию"
+            >
               <span className="chart-legend-swatch" style={{ background: series.color }} />
               {series.label}
             </span>
           ))}
         </div>
         <ResponsiveContainer width="100%" height={280}>
-          <AreaChart data={data} margin={{ top: 8, right: 8, bottom: 0, left: 8 }}>
+          <LineChart data={data} margin={{ top: 8, right: 8, bottom: 0, left: 8 }}>
             <CartesianGrid stroke={GRIDLINE} vertical={false} />
             <XAxis
               dataKey="label"
@@ -136,31 +152,31 @@ export default function TimelineChart({
               boundaries.map((boundary) => (
                 <ReferenceLine
                   key={boundary.startedAtMilliseconds}
-                  x={
-                    bucket === 'hour'
-                      ? formatTime(boundary.startedAtMilliseconds)
-                      : formatDay(boundary.startedAtMilliseconds)
-                  }
+                  x={formatTime(boundary.startedAtMilliseconds)}
                   stroke="#898781"
                   strokeDasharray="4 4"
                   strokeWidth={1}
                 />
               ))}
             {labels.map((series) => (
-              <Area
+              <Line
                 key={series.key}
                 type="monotone"
                 dataKey={series.key}
                 name={series.label}
-                stackId="tokens"
-                stroke={SURFACE}
+                stroke={series.color}
                 strokeWidth={2}
-                fill={series.color}
-                fillOpacity={0.85}
+                strokeOpacity={opacityOf(series.key)}
+                dot={false}
+                activeDot={
+                  focus === null || focus === series.key
+                    ? { r: 4, strokeWidth: 0 }
+                    : { r: 0 }
+                }
                 isAnimationActive={false}
               />
             ))}
-          </AreaChart>
+          </LineChart>
         </ResponsiveContainer>
       </div>
     </section>

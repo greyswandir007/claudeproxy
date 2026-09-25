@@ -14,6 +14,15 @@ export interface WindowSummary {
   startedAtMilliseconds: number
   endsAtMilliseconds: number
   totals: UsageTotals
+  /** Провайдеры, обслужившие запросы этого окна ключа. */
+  providers: string[]
+}
+
+export interface ProviderWindowSummary {
+  providerName: string
+  startedAtMilliseconds: number
+  endsAtMilliseconds: number
+  totals: UsageTotals
 }
 
 export interface RangeSummary {
@@ -346,6 +355,8 @@ export const api = {
     getJson<WindowSummary | null>(`/api/window?key=${encodeURIComponent(key)}`),
   windowHistory: (key: string, limit = 20) =>
     getJson<WindowSummary[]>(`/api/windows?key=${encodeURIComponent(key)}&limit=${limit}`),
+  providerWindowHistory: (limit = 20) =>
+    getJson<ProviderWindowSummary[]>(`/api/provider-windows?limit=${limit}`),
   timeline: (bucket: 'hour' | 'day', key: string | null) =>
     getJson<TimelinePoint[]>(
       `/api/timeline?bucket=${bucket}${key ? `&key=${encodeURIComponent(key)}` : ''}`,

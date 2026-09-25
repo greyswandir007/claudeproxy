@@ -6,6 +6,7 @@ import {
   type GroupedTimelinePoint,
   type GroupedUsage,
   type ProviderLimitUsage,
+  type ProviderWindowSummary,
   type ProxyConfig,
   type RangeSummary,
   type RouteCooldown,
@@ -39,6 +40,7 @@ export default function DashboardPage({ refreshTick }: { refreshTick: number }) 
   const [byProviderRowsWeek, setByProviderRowsWeek] = useState<GroupedUsage[]>([])
   const [byProviderRowsMonth, setByProviderRowsMonth] = useState<GroupedUsage[]>([])
   const [windows, setWindows] = useState<WindowSummary[]>([])
+  const [providerWindows, setProviderWindows] = useState<ProviderWindowSummary[]>([])
   const [windowModels, setWindowModels] = useState<GroupedUsage[]>([])
   const [windowProviders, setWindowProviders] = useState<GroupedUsage[]>([])
   const [fallbackReport, setFallbackReport] = useState<FallbackReport | null>(null)
@@ -100,6 +102,10 @@ export default function DashboardPage({ refreshTick }: { refreshTick: number }) 
       .routeCooldowns()
       .then(setRouteCooldowns)
       .catch(() => setRouteCooldowns([]))
+    api
+      .providerWindowHistory()
+      .then(setProviderWindows)
+      .catch(() => setProviderWindows([]))
   }, [refreshTick])
 
   // сводки и окна выбранного ключа
@@ -313,7 +319,7 @@ export default function DashboardPage({ refreshTick }: { refreshTick: number }) 
           ))}
         </section>
       )}
-      {keyParameter && <WindowHistoryTable windows={windows} />}
+      {keyParameter && <WindowHistoryTable windows={windows} providerWindows={providerWindows} />}
     </div>
   )
 }

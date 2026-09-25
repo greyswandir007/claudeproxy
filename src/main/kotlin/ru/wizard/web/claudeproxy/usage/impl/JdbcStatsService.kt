@@ -74,6 +74,8 @@ class JdbcStatsService(
 
     override suspend fun windowHistory(clientKey: String, limit: Int): List<StatsService.WindowSummary> =
         databaseProvider.execute {
+            // окна ключа + перечень провайдеров, обслуживших каждое окно
+            val windowRows = ArrayList<StatsService.WindowSummary>()
             jdbcTemplate.query(
                 """SELECT w.started_at, w.ends_at,
                        COUNT(e.id),
@@ -87,19 +89,71 @@ class JdbcStatsService(
                    ORDER BY w.started_at DESC
                    LIMIT ?""",
                 { resultSet, _ ->
-                    StatsService.WindowSummary(
-                        startedAtMilliseconds = resultSet.getLong(1),
-                        endsAtMilliseconds = resultSet.getLong(2),
-                        totals = StatsService.UsageTotals(
-                            requests = resultSet.getLong(3),
-                            inputTokens = resultSet.getLong(4),
-                            outputTokens = resultSet.getLong(5),
-                            cacheCreationTokens = resultSet.getLong(6),
-                            cacheReadTokens = resultSet.getLong(7),
+                    windowRows.add(
+                        StatsService.WindowSummary(
+                            startedAtMilliseconds = resultSet.getLong(1),
+                            endsAtMilliseconds = resultSet.getLong(2),
+                            totals = StatsService.UsageTotals(
+                                requests = resultSet.getLong(3),
+                                inputTokens = resultSet.getLong(4),
+                                outputTokens = resultSet.getLong(5),
+                                cacheCreationTokens = resultSet.getLong(6),
+                                cacheReadTokens = resultSet.getLong(7),
+                            ),
                         ),
                     )
                 },
                 clientKey,
+                limit,
+            )
+            val providersByWindowStart = HashMap<Long, MutableSet<String>>()
+            jdbcTemplate.query(
+                """SELECT w.started_at, e.provider FROM usage_window w
+                   JOIN usage_event e
+                     ON e.client_key = w.client_key AND e.ts >= w.started_at AND e.ts < w.ends_at
+                   WHERE w.client_key = ?
+                   GROUP BY w.started_at, e.provider""",
+                { resultSet ->
+                    providersByWindowStart
+                        .getOrPut(resultSet.getLong(1)) { LinkedHashSet() }
+                        .add(resultSet.getString(2))
+                },
+                clientKey,
+            )
+            windowRows.map { window ->
+                window.copy(
+                    providers = providersByWindowStart[window.startedAtMilliseconds]?.toList() ?: emptyList(),
+                )
+            }
+        }
+
+    override suspend fun providerWindowHistory(limit: Int): List<StatsService.ProviderWindowSummary> =
+        databaseProvider.execute {
+            jdbcTemplate.query(
+                """SELECT w.provider_name, w.started_at, w.ends_at,
+                       COUNT(e.id),
+                       COALESCE(SUM(e.input_tokens), 0), COALESCE(SUM(e.output_tokens), 0),
+                       COALESCE(SUM(e.cache_creation_tokens), 0), COALESCE(SUM(e.cache_read_tokens), 0)
+                   FROM provider_usage_window w
+                   LEFT JOIN usage_event e
+                     ON e.provider = w.provider_name AND e.ts >= w.started_at AND e.ts < w.ends_at
+                   GROUP BY w.provider_name, w.started_at, w.ends_at
+                   ORDER BY w.started_at DESC
+                   LIMIT ?""",
+                { resultSet, _ ->
+                    StatsService.ProviderWindowSummary(
+                        providerName = resultSet.getString(1),
+                        startedAtMilliseconds = resultSet.getLong(2),
+                        endsAtMilliseconds = resultSet.getLong(3),
+                        totals = StatsService.UsageTotals(
+                            requests = resultSet.getLong(4),
+                            inputTokens = resultSet.getLong(5),
+                            outputTokens = resultSet.getLong(6),
+                            cacheCreationTokens = resultSet.getLong(7),
+                            cacheReadTokens = resultSet.getLong(8),
+                        ),
+                    )
+                },
                 limit,
             )
         }

@@ -65,6 +65,12 @@ class StatsController(
         @RequestParam(defaultValue = "20") limit: Int,
     ): List<StatsService.WindowSummary> = statsService.windowHistory(clientKey, limit)
 
+    /** История окон провайдеров — у каждого свой отсчёт 5-часового окна. */
+    @GetMapping("/api/provider-windows")
+    suspend fun providerWindowHistory(
+        @RequestParam(defaultValue = "20") limit: Int,
+    ): List<StatsService.ProviderWindowSummary> = statsService.providerWindowHistory(limit)
+
     @GetMapping("/api/timeline")
     suspend fun timeline(
         @RequestParam(defaultValue = "hour") bucket: String,
