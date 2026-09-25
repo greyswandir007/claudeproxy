@@ -3,6 +3,7 @@ import {
   CartesianGrid,
   Line,
   LineChart,
+  ReferenceArea,
   ReferenceLine,
   ResponsiveContainer,
   Tooltip,
@@ -49,15 +50,21 @@ function ChartTooltip({
   active,
   payload,
   label,
+  bucket,
 }: {
   active?: boolean
   payload?: TooltipEntry[]
-  label?: string
+  label?: string | number
+  bucket: 'hour' | 'day'
 }) {
   if (!active || !payload || payload.length === 0) return null
+  // ось времени числовая: метка тултипа — начало корзины в миллисекундах
+  const bucketStart = Number(label)
   return (
     <div className="chart-tooltip">
-      <div className="chart-tooltip-title">{label}</div>
+      <div className="chart-tooltip-title">
+        {bucket === 'hour' ? formatTime(bucketStart) : formatDay(bucketStart)}
+      </div>
       {payload.map((entry) => (
         <div key={entry.name} className="chart-tooltip-row">
           <span className="chart-tooltip-swatch" style={{ background: entry.color }} />
@@ -78,17 +85,27 @@ export default function TimelineChart({
   labels,
   bucket,
   boundaries,
+  keySelected,
 }: {
   data: Record<string, number | string>[]
   labels: { key: string; label: string; color: string }[]
   bucket: 'hour' | 'day'
   boundaries: WindowBoundary[]
+  keySelected: boolean
 }) {
   const [hoveredSeries, setHoveredSeries] = useState<string | null>(null)
   const [isolatedSeries, setIsolatedSeries] = useState<string | null>(null)
   const focus = isolatedSeries ?? hoveredSeries
   // активная серия: 1 — фокус, DIMMED — остальные
   const opacityOf = (key: string) => (focus === null || focus === key ? 1 : 0.15)
+
+  // числовая ось времени: точки — начала корзин, по краям полкорзины воздуха;
+  // деления — границы корзин, не чаще ~12, чтобы подписи не слипались
+  const bucketMilliseconds = bucket === 'hour' ? 3_600_000 : 86_400_000
+  const tickStride = Math.max(1, Math.ceil(data.length / 12))
+  const timeTicks = data
+    .filter((_, index) => index % tickStride === 0)
+    .map((row) => Number(row.sortKey))
 
   if (data.length === 0) {
     return (
@@ -98,12 +115,22 @@ export default function TimelineChart({
       </section>
     )
   }
+
+  // окна: полоса от старта до конца (конец текущего окна обрезаем краем графика);
+  // подписи времени на границах — только когда корзин немного (период «сутки»)
+  const chartEnd = Number(data[data.length - 1].sortKey) + bucketMilliseconds / 2
+  const showWindowLabels = data.length <= 40
   return (
     <section className="card chart-card">
       <h2>
         Расход по времени
         {bucket === 'hour' && boundaries.length > 0 && (
-          <span className="card-note">серые линии — старт 5-часовых окон ключа</span>
+          <span className="card-note">
+            серые полосы — 5-часовые окна ключа, пунктир — старт, точки — конец
+          </span>
+        )}
+        {bucket === 'hour' && boundaries.length === 0 && !keySelected && (
+          <span className="card-note">5-часовые окна — выберите конкретный ключ</span>
         )}
       </h2>
       <div className="chart-container">
@@ -134,11 +161,19 @@ export default function TimelineChart({
           <LineChart data={data} margin={{ top: 8, right: 8, bottom: 0, left: 8 }}>
             <CartesianGrid stroke={GRIDLINE} vertical={false} />
             <XAxis
-              dataKey="label"
+              dataKey="sortKey"
+              type="number"
+              domain={[
+                (dataMin: number) => dataMin - bucketMilliseconds / 2,
+                (dataMax: number) => dataMax + bucketMilliseconds / 2,
+              ]}
+              ticks={timeTicks}
+              tickFormatter={(bucketStart: number) =>
+                bucket === 'hour' ? formatTime(bucketStart) : formatDay(bucketStart)
+              }
               tick={{ fill: MUTED_INK, fontSize: 12 }}
               axisLine={{ stroke: GRIDLINE }}
               tickLine={false}
-              minTickGap={48}
             />
             <YAxis
               tick={{ fill: MUTED_INK, fontSize: 12 }}
@@ -147,17 +182,65 @@ export default function TimelineChart({
               width={64}
               tickFormatter={(value: number) => formatTokens(value)}
             />
-            <Tooltip content={<ChartTooltip />} />
+            <Tooltip content={<ChartTooltip bucket={bucket} />} />
+            {bucket === 'hour' &&
+              boundaries.map((boundary) => {
+                const windowEnd = Math.min(boundary.endsAtMilliseconds, chartEnd)
+                if (boundary.startedAtMilliseconds >= windowEnd) {
+                  return null
+                }
+                return (
+                  <ReferenceArea
+                    key={`window-area-${boundary.startedAtMilliseconds}`}
+                    x1={boundary.startedAtMilliseconds}
+                    x2={windowEnd}
+                    fill="#898781"
+                    fillOpacity={0.12}
+                  />
+                )
+              })}
             {bucket === 'hour' &&
               boundaries.map((boundary) => (
                 <ReferenceLine
-                  key={boundary.startedAtMilliseconds}
-                  x={formatTime(boundary.startedAtMilliseconds)}
+                  key={`window-start-${boundary.startedAtMilliseconds}`}
+                  x={boundary.startedAtMilliseconds}
                   stroke="#898781"
                   strokeDasharray="4 4"
                   strokeWidth={1}
+                  label={
+                    showWindowLabels
+                      ? {
+                          value: formatTime(boundary.startedAtMilliseconds),
+                          position: 'insideTopLeft',
+                          fill: MUTED_INK,
+                          fontSize: 10,
+                        }
+                      : undefined
+                  }
                 />
               ))}
+            {bucket === 'hour' &&
+              boundaries
+                .filter((boundary) => boundary.endsAtMilliseconds <= chartEnd)
+                .map((boundary) => (
+                  <ReferenceLine
+                    key={`window-end-${boundary.startedAtMilliseconds}`}
+                    x={boundary.endsAtMilliseconds}
+                    stroke="#898781"
+                    strokeDasharray="1 3"
+                    strokeWidth={1}
+                    label={
+                      showWindowLabels
+                        ? {
+                            value: formatTime(boundary.endsAtMilliseconds),
+                            position: 'insideTopRight',
+                            fill: MUTED_INK,
+                            fontSize: 10,
+                          }
+                        : undefined
+                    }
+                  />
+                ))}
             {labels.map((series) => (
               <Line
                 key={series.key}

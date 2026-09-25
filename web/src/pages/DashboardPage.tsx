@@ -287,13 +287,14 @@ export default function DashboardPage({ refreshTick }: { refreshTick: number }) 
             </button>
           ))}
         </div>
-        <span className="muted">гранулярность: {bucket === 'hour' ? 'часы' : 'дни'} (авто)</span>
+        <span className="muted">шаг по времени: {bucket === 'hour' ? '1 час' : '1 день'}</span>
       </div>
       <TimelineChart
         data={timelineRows}
         labels={timelineLabels}
         bucket={bucket}
         boundaries={boundaries}
+        keySelected={keyParameter !== ''}
       />
       <div className="tables-row">
         <UsageTable
