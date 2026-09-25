@@ -675,6 +675,10 @@ th.numeric {
   white-space: nowrap;
 }
 
+.window-stat-cost strong {
+  color: #c98500;
+}
+
 .window-strip-stats strong {
   color: var(--text-primary);
   font-variant-numeric: tabular-nums;

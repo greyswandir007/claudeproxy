@@ -1,6 +1,13 @@
 import type { GroupedUsage, ProviderLimitUsage, WindowSummary } from '../api/client'
 import { formatTime, formatTokens, totalTokens } from '../format'
 
+/** $-формат: до 4 значащих нулей после точки. */
+function formatCost(costUsd: number): string {
+  if (costUsd >= 100) return costUsd.toFixed(0)
+  if (costUsd >= 1) return costUsd.toFixed(2)
+  return costUsd.toFixed(4)
+}
+
 // Полоса текущего 5-часового окна ключа: компактно, во всю ширину дашборда —
 // прогресс до сброса и токены в одну строку, ниже — 5ч-лимиты провайдеров
 // и срез расхода по моделям/провайдерам внутри окна мелкими чипами.
@@ -17,6 +24,7 @@ export default function WindowCard({
   windowProviders: GroupedUsage[]
   providerLimits: ProviderLimitUsage[]
 }) {
+  const costUsd = clientWindow?.costUsd ?? null
   const windowLimitProviders = providerLimits.filter(
     (limitUsage) => limitUsage.window !== null,
   )
@@ -64,6 +72,11 @@ export default function WindowCard({
           <span className="window-stat">
             Запросов <strong>{formatTokens(totals.requests)}</strong>
           </span>
+          {costUsd != null && costUsd > 0 && (
+            <span className="window-stat window-stat-cost">
+              Стоимость ≈ <strong>${formatCost(costUsd)}</strong>
+            </span>
+          )}
         </span>
       </div>
       {windowLimitProviders.length > 0 && (

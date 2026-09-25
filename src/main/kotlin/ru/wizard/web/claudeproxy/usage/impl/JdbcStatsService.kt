@@ -123,9 +123,73 @@ class JdbcStatsService(
             windowRows.map { window ->
                 window.copy(
                     providers = providersByWindowStart[window.startedAtMilliseconds]?.toList() ?: emptyList(),
+                    costUsd = windowCost(
+                        window.startedAtMilliseconds,
+                        window.endsAtMilliseconds,
+                        clientKey,
+                        perMillionByProviderName(),
+                    ),
                 )
             }
         }
+
+    /** Стоимость токенов окна ключа: Σ (токены провайдера в окне × цена $/1М). */
+    private fun windowCost(
+        startedAtMilliseconds: Long,
+        endsAtMilliseconds: Long,
+        clientKey: String,
+        perMillionByProvider: Map<String, Double>,
+    ): Double? {
+        if (perMillionByProvider.isEmpty()) return null
+        val tokensByProvider = HashMap<String, Long>()
+        jdbcTemplate.query(
+            """SELECT provider,
+                      COALESCE(SUM(input_tokens + output_tokens + cache_creation_tokens + cache_read_tokens), 0)
+               FROM usage_event
+               WHERE client_key = ? AND ts >= ? AND ts < ?
+               GROUP BY provider""",
+            { resultSet ->
+                tokensByProvider[resultSet.getString(1)] = resultSet.getLong(2)
+            },
+            clientKey,
+            startedAtMilliseconds,
+            endsAtMilliseconds,
+        )
+        var costUsd = 0.0
+        tokensByProvider.forEach { (providerName, tokens) ->
+            perMillionByProvider[providerName]?.let { perMillion ->
+                costUsd += tokens / 1_000_000.0 * perMillion
+            }
+        }
+        return costUsd
+    }
+
+    /** Эффективная цена $/1М по провайдерам (заданная или выводимая из лимитов). */
+    private fun perMillionByProviderName(): Map<String, Double> {
+        val result = HashMap<String, Double>()
+        jdbcTemplate.query(
+            """SELECT name, pricing_mode, price_per_million_tokens, price_monthly,
+                      limit_month_tokens, limit_week_tokens, limit_window_tokens
+               FROM provider WHERE pricing_mode <> ''""",
+        ) { resultSet ->
+            val perMillion = resultSet.getDouble(3).takeIf { !resultSet.wasNull() }
+            val monthly = resultSet.getDouble(4).takeIf { !resultSet.wasNull() }
+            val monthLimit = resultSet.getLong(5).takeIf { !resultSet.wasNull() }
+                ?: resultSet.getLong(6).takeIf { !resultSet.wasNull() }
+                    ?.let { Math.round(it * WEEKS_PER_MONTH) }
+                ?: resultSet.getLong(7).takeIf { !resultSet.wasNull() }
+                    ?.let { it * WINDOWS_PER_MONTH }
+            val effective = when {
+                perMillion != null -> perMillion
+                monthly != null && monthLimit != null && monthLimit > 0 ->
+                    monthly / (monthLimit / 1_000_000)
+
+                else -> null
+            }
+            effective?.let { result[resultSet.getString(1)] = it }
+        }
+        return result
+    }
 
     override suspend fun providerWindowHistory(limit: Int): List<StatsService.ProviderWindowSummary> =
         databaseProvider.execute {

@@ -16,6 +16,8 @@ export interface WindowSummary {
   totals: UsageTotals
   /** Провайдеры, обслужившие запросы этого окна ключа. */
   providers: string[]
+  /** Стоимость токенов окна по тарификации провайдеров; null — цен нет. */
+  costUsd: number | null
 }
 
 export interface ProviderWindowSummary {

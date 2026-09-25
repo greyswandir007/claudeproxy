@@ -322,6 +322,7 @@ class ProxyIntegrationTest {
             .expectBody()
             .jsonPath("$[0].totals.inputTokens").isEqualTo(10)
             .jsonPath("$[0].providers[0]").isEqualTo("fake")
+            .jsonPath("$[0].costUsd").doesNotExist()
 
         // история окон провайдеров — независимый отсчёт у каждого
         webTestClient.get().uri("/api/provider-windows?limit=5")
@@ -1194,6 +1195,15 @@ class ProxyIntegrationTest {
         assertEquals(false, priceProvider.path("pricePerMillionDerived").asBoolean())
         assertEquals(7.0, priceProvider.path("priceMonthly").asDouble(), 0.001) // 2М × $3.5
         assertEquals(true, priceProvider.path("priceMonthlyDerived").asBoolean())
+        // стоимость токенов окна ключа: 2 токена × $3.5/1М ≈ 0.000007
+        val windowBody = webTestClient.get().uri("/api/window?key=test")
+            .exchange().expectStatus().isOk
+            .expectBody(String::class.java).returnResult().responseBody!!
+        assertTrue(
+            objectMapper.readTree(windowBody).path("costUsd").asDouble(-1.0) > 0,
+            "costUsd должен быть > 0 при тарифицированном провайдере в окне",
+        )
+
         assertTrue(priceProvider.path("spentTokens30Days").asLong() > 0)
 
         // monthly-режим: цена за 1М — расчётная из лимита
