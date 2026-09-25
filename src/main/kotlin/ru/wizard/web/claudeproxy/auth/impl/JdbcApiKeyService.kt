@@ -64,9 +64,21 @@ class JdbcApiKeyService(
     override suspend fun authenticate(presentedKey: String): AuthorizedKey? =
         databaseProvider.execute {
             jdbcTemplate.query(
-                "SELECT id, name FROM api_key WHERE key_hash = ? AND revoked_at IS NULL",
+                """SELECT id, name, allowed_models, limit_window_tokens, limit_month_tokens
+                   FROM api_key WHERE key_hash = ? AND revoked_at IS NULL""",
                 { resultSet, _ ->
-                    AuthorizedKey(resultSet.getLong("id"), resultSet.getString("name"))
+                    AuthorizedKey(
+                        id = resultSet.getLong("id"),
+                        name = resultSet.getString("name"),
+                        allowedModels = resultSet.getString("allowed_models")
+                            .split(',')
+                            .map(String::trim)
+                            .filter(String::isNotEmpty),
+                        limitWindowTokens = resultSet.getLong("limit_window_tokens")
+                            .takeIf { !resultSet.wasNull() },
+                        limitMonthTokens = resultSet.getLong("limit_month_tokens")
+                            .takeIf { !resultSet.wasNull() },
+                    )
                 },
                 ApiKeyService.sha256Hex(presentedKey),
             ).firstOrNull()

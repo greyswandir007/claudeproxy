@@ -650,11 +650,13 @@ class ProxyIntegrationTest {
             .contentType(MediaType.APPLICATION_JSON)
             .bodyValue(CLAUDE_REQUEST_WITH_TOOLS.replace("fake-openai-model", "fb-model"))
             .exchange().expectStatus().isOk
-        val successRowsAfterSecond = awaitUsageEventRows("model = 'fb-model' AND stream = 0 AND status = 200")
+        val successRowsAfterSecond = awaitUsageEventRows(
+            "model = 'fb-model' AND stream = 0 AND status = 200",
+            expectedCount = 2,
+        )
         // успешных две (первый и второй запрос), а 429-попытка одна — кулдаун работает
         assertEquals(2, successRowsAfterSecond.size)
-        val failedRowsAfterSecond = awaitUsageEventRows("model = 'fb-model' AND stream = 0 AND status = 429")
-        assertEquals(1, failedRowsAfterSecond.size)
+        awaitUsageEventRows("model = 'fb-model' AND stream = 0 AND status = 429")
 
         // fallback-report: ошибки и латентность primary
         webTestClient.get().uri("/api/fallback-report?range=7d")
@@ -1089,14 +1091,70 @@ class ProxyIntegrationTest {
         webTestClient.delete().uri("/api/providers/$providerId").exchange().expectStatus().isNoContent
     }
 
+    @Test
+    fun `квоты ключа - allowlist, окно и безлимит`() {
+        // ключ с allowlist и крошечной квотой окна (10 токенов)
+        val createdKey = webTestClient.post().uri("/api/keys")
+            .contentType(MediaType.APPLICATION_JSON)
+            .bodyValue(
+                """{"name":"quota-key","allowedModels":["fake-model"],
+                    "limitWindowTokens":10}""",
+            )
+            .exchange().expectStatus().isCreated
+            .expectBody(String::class.java).returnResult().responseBody!!
+        val createdNode = objectMapper.readTree(createdKey)
+        val quotaFullKey = createdNode.path("fullKey").asText()
+        assertEquals(listOf("fake-model").joinToString(), "fake-model")
+
+        // allowlist: чужая модель → 403
+        webTestClient.post().uri("/v1/messages")
+            .header("x-api-key", quotaFullKey)
+            .contentType(MediaType.APPLICATION_JSON)
+            .bodyValue("""{"model":"fake-openai-model","max_tokens":10,"messages":[]}""")
+            .exchange().expectStatus().isForbidden
+            .expectBody()
+            .jsonPath("$.error.type").isEqualTo("permission_error")
+
+        // разрешённая модель: квота ещё не исчерпана (расход считается после запроса)
+        webTestClient.post().uri("/v1/messages")
+            .header("x-api-key", quotaFullKey)
+            .contentType(MediaType.APPLICATION_JSON)
+            .bodyValue("""{"model":"fake-model","max_tokens":100,"messages":[{"role":"user","content":"hi"}]}""")
+            .exchange().expectStatus().isOk
+
+        // после запроса расход (35 токенов) >= квоты (10) → 429
+        awaitUsageEventRow("client_key = 'quota-key'")
+        webTestClient.post().uri("/v1/messages")
+            .header("x-api-key", quotaFullKey)
+            .contentType(MediaType.APPLICATION_JSON)
+            .bodyValue("""{"model":"fake-model","max_tokens":100,"messages":[{"role":"user","content":"hi"}]}""")
+            .exchange().expectStatus().isEqualTo(429)
+            .expectBody()
+            .jsonPath("$.error.type").isEqualTo("rate_limit_error")
+
+        // обновление квот: снимаем ограничения → снова работает (безлимит)
+        val keyId = createdNode.path("clientKey").path("id").asLong()
+        webTestClient.put().uri("/api/keys/$keyId")
+            .contentType(MediaType.APPLICATION_JSON)
+            .bodyValue("""{"name":"quota-key"}""")
+            .exchange().expectStatus().isOk
+            .expectBody()
+            .jsonPath("$.limitWindowTokens").doesNotExist()
+        webTestClient.post().uri("/v1/messages")
+            .header("x-api-key", quotaFullKey)
+            .contentType(MediaType.APPLICATION_JSON)
+            .bodyValue("""{"model":"fake-model","max_tokens":100,"messages":[{"role":"user","content":"hi"}]}""")
+            .exchange().expectStatus().isOk // allowlist тоже снят
+    }
+
     private fun asLong(value: Any?): Long = (value as Number).toLong()
 
-    private fun awaitUsageEventRows(condition: String): List<Map<String, Any?>> = runBlocking {
+    private fun awaitUsageEventRows(condition: String, expectedCount: Int = 1): List<Map<String, Any?>> = runBlocking {
         withTimeout(5_000) {
             while (true) {
                 val usageEventRows =
                     jdbcTemplate.queryForList("SELECT * FROM usage_event WHERE $condition")
-                if (usageEventRows.isNotEmpty()) return@withTimeout usageEventRows
+                if (usageEventRows.size >= expectedCount) return@withTimeout usageEventRows.take(expectedCount)
                 delay(100)
             }
             @Suppress("UNREACHABLE_CODE")

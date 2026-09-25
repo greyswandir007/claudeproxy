@@ -1029,6 +1029,18 @@ th.numeric {
   opacity: 0.35;
 }
 
+.model-chip-selectable {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.model-chip-selectable input {
+  accent-color: var(--series-blue);
+}
+
 .exposure-page {
   display: flex;
   flex-direction: column;

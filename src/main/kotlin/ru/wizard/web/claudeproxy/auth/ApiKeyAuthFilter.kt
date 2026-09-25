@@ -38,6 +38,7 @@ class ApiKeyAuthFilter(private val apiKeyService: ApiKeyService) : WebFilter {
                 ?: throw ApiError(HttpStatus.UNAUTHORIZED, "authentication_error", "invalid x-api-key")
         }.flatMap { authorizedKey ->
             exchange.attributes[CLIENT_KEY_ATTRIBUTE] = authorizedKey.name
+            exchange.attributes[AUTHORIZED_KEY_ATTRIBUTE] = authorizedKey
             chain.filter(exchange)
         }.onErrorResume(ApiError::class.java) { error ->
             writeError(exchange, openAiFormat, error.message ?: "error")
@@ -67,6 +68,9 @@ class ApiKeyAuthFilter(private val apiKeyService: ApiKeyService) : WebFilter {
 
     companion object {
         const val CLIENT_KEY_ATTRIBUTE = "claudeproxy.clientKey"
+
+        /** Полный объект ключа (квоты/allowlist) — для KeyQuotaService. */
+        const val AUTHORIZED_KEY_ATTRIBUTE = "claudeproxy.authorizedKey"
 
         private fun extractKey(request: ServerHttpRequest): String? {
             request.headers.getFirst("x-api-key")?.let { apiKey ->

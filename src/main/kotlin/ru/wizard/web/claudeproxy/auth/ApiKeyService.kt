@@ -7,7 +7,16 @@ package ru.wizard.web.claudeproxy.auth
 interface ApiKeyService {
 
     /** Ключ, прошедший аутентификацию. */
-    data class AuthorizedKey(val id: Long, val name: String)
+    data class AuthorizedKey(
+        val id: Long,
+        val name: String,
+        /** Пустой список = все модели (безлимит по моделям). */
+        val allowedModels: List<String> = emptyList(),
+        /** NULL = безлимит; квота токенов на 5-часовое окно. */
+        val limitWindowTokens: Long? = null,
+        /** NULL = безлимит; квота токенов на скользящие 30 дней. */
+        val limitMonthTokens: Long? = null,
+    )
 
     /** Вносит сид-ключи из YAML в БД (только если имени ещё нет). */
     fun seed()

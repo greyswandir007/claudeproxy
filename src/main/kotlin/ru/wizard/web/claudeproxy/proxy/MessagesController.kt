@@ -21,6 +21,7 @@ import ru.wizard.web.claudeproxy.routing.ModelRegistry
  */
 @RestController
 class MessagesController(
+    private val keyQuotaService: ru.wizard.web.claudeproxy.auth.KeyQuotaService,
     private val modelRegistry: ModelRegistry,
     private val objectMapper: ObjectMapper,
     private val anthropicHandler: AnthropicHandler,
@@ -67,6 +68,7 @@ class MessagesController(
         if (model.isEmpty()) {
             throw ApiError(HttpStatus.BAD_REQUEST, "invalid_request_error", "model: Field required")
         }
+        keyQuotaService.enforce(exchange, model)
         val routes = modelRegistry.find(model)
         if (routes.isEmpty()) {
             throw ApiError(HttpStatus.NOT_FOUND, "not_found_error", "model: $model not found")

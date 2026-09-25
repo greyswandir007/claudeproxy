@@ -55,9 +55,19 @@ export interface ClientKey {
   id: number
   name: string
   keyPrefix: string
+  allowedModels: string[]
+  limitWindowTokens: number | null
+  limitMonthTokens: number | null
   createdAt: number
   lastUsedAt: number | null
   revokedAt: number | null
+}
+
+export interface KeyRequest {
+  name: string
+  allowedModels?: string[]
+  limitWindowTokens?: number | null
+  limitMonthTokens?: number | null
 }
 
 export interface CreatedKey {
@@ -391,7 +401,9 @@ export const api = {
     ),
   config: () => getJson<ProxyConfig>('/api/config'),
   keys: () => getJson<ClientKey[]>('/api/keys'),
-  createKey: (name: string) => postJson<CreatedKey>('/api/keys', { name }),
+  createKey: (request: KeyRequest) => postJson<CreatedKey>('/api/keys', request),
+  updateKey: (id: number, request: KeyRequest) =>
+    putJson<ClientKey>(`/api/keys/${id}`, request),
   revokeKey: (id: number) => postJson<{ revoked: boolean }>(`/api/keys/${id}/revoke`),
   listProviders: () => getJson<ManagedProvider[]>('/api/providers'),
   createProvider: (request: ProviderRequest) => postJson<ManagedProvider>('/api/providers', request),

@@ -33,6 +33,7 @@ import java.nio.charset.StandardCharsets.UTF_8
  */
 @RestController
 class OpenAiCompatibilityController(
+    private val keyQuotaService: ru.wizard.web.claudeproxy.auth.KeyQuotaService,
     private val modelRegistry: ModelRegistry,
     private val objectMapper: ObjectMapper,
     private val anthropicHandler: AnthropicHandler,
@@ -60,6 +61,7 @@ class OpenAiCompatibilityController(
             throw ApiError(HttpStatus.BAD_REQUEST, "invalid_request_error", "model: Field required")
         }
         val claudeRoot = requestTranslator.translate(openAiRoot)
+        keyQuotaService.enforce(exchange, model)
         val routes = modelRegistry.find(model)
         if (routes.isEmpty()) {
             throw ApiError(

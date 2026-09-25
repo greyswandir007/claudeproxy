@@ -1,11 +1,14 @@
 import { useEffect, useState } from 'react'
 import { api, type ClientKey, type CreatedKey } from '../api/client'
-import { formatDateTime } from '../format'
+import KeyQuotaForm from '../components/KeyQuotaForm'
+import { formatDateTime, formatTokens } from '../format'
 
-// Экран «Ключи»: генерация, список, отзыв. Полный ключ показывается один раз.
+// Экран «Ключи»: генерация с квотами или безлимитом, редактирование квот,
+// отзыв. Полный ключ показывается один раз.
 export default function KeysPage({ refreshTick }: { refreshTick: number }) {
   const [clientKeys, setClientKeys] = useState<ClientKey[]>([])
-  const [newKeyName, setNewKeyName] = useState('')
+  const [creatingKey, setCreatingKey] = useState(false)
+  const [editingKeyId, setEditingKeyId] = useState<number | null>(null)
   const [created, setCreated] = useState<CreatedKey | null>(null)
   const [copied, setCopied] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -18,19 +21,6 @@ export default function KeysPage({ refreshTick }: { refreshTick: number }) {
   }
 
   useEffect(reload, [refreshTick])
-
-  const createKey = () => {
-    setError(null)
-    api
-      .createKey(newKeyName.trim())
-      .then((result) => {
-        setCreated(result)
-        setCopied(false)
-        setNewKeyName('')
-        reload()
-      })
-      .catch((createError: Error) => setError(createError.message))
-  }
 
   const copyFullKey = () => {
     if (!created) return
@@ -64,21 +54,28 @@ export default function KeysPage({ refreshTick }: { refreshTick: number }) {
           </div>
         </div>
       )}
-      <section className="card">
-        <h2>Новый ключ</h2>
-        <div className="create-row">
-          <input
-            type="text"
-            placeholder="имя ключа, например my-laptop"
-            value={newKeyName}
-            maxLength={64}
-            onChange={(event) => setNewKeyName(event.target.value)}
-          />
-          <button className="button" disabled={newKeyName.trim().length === 0} onClick={createKey}>
-            Сгенерировать
-          </button>
-        </div>
-      </section>
+      {creatingKey ? (
+        <KeyQuotaForm
+          onSaved={(createdKey) => {
+            setCreatingKey(false)
+            if (createdKey) {
+              setCreated(createdKey)
+              setCopied(false)
+            }
+            reload()
+          }}
+          onCancel={() => setCreatingKey(false)}
+        />
+      ) : (
+        editingKeyId === null && (
+          <div className="models-toolbar">
+            <button className="button" onClick={() => setCreatingKey(true)}>
+              + Создать ключ
+            </button>
+            <span className="muted">безлимитный или с квотами по моделям и токенам</span>
+          </div>
+        )
+      )}
       <section className="card table-card">
         <h2>Ключи</h2>
         {clientKeys.length === 0 ? (
@@ -89,6 +86,7 @@ export default function KeysPage({ refreshTick }: { refreshTick: number }) {
               <tr>
                 <th>Имя</th>
                 <th>Префикс</th>
+                <th>Квоты</th>
                 <th>Создан</th>
                 <th>Последний запрос</th>
                 <th>Статус</th>
@@ -96,24 +94,67 @@ export default function KeysPage({ refreshTick }: { refreshTick: number }) {
               </tr>
             </thead>
             <tbody>
-              {clientKeys.map((key) => (
-                <tr key={key.id} className={key.revokedAt ? 'row-revoked' : undefined}>
-                  <td className="label-cell">{key.name}</td>
-                  <td>
-                    <code>{key.keyPrefix}…</code>
-                  </td>
-                  <td>{formatDateTime(key.createdAt)}</td>
-                  <td>{key.lastUsedAt ? formatDateTime(key.lastUsedAt) : '—'}</td>
-                  <td>{key.revokedAt ? 'отозван' : 'активен'}</td>
-                  <td>
-                    {key.revokedAt === null && (
-                      <button className="button button-danger" onClick={() => revokeKey(key)}>
-                        Отозвать
-                      </button>
-                    )}
-                  </td>
-                </tr>
-              ))}
+              {clientKeys.map((key) =>
+                editingKeyId === key.id ? (
+                  <tr key={key.id}>
+                    <td colSpan={7}>
+                      <KeyQuotaForm
+                        clientKey={key}
+                        onSaved={() => {
+                          setEditingKeyId(null)
+                          reload()
+                        }}
+                        onCancel={() => setEditingKeyId(null)}
+                      />
+                    </td>
+                  </tr>
+                ) : (
+                  <tr key={key.id} className={key.revokedAt ? 'row-revoked' : undefined}>
+                    <td className="label-cell">{key.name}</td>
+                    <td>
+                      <code>{key.keyPrefix}…</code>
+                    </td>
+                    <td className="muted-cell">
+                      {!key.limitWindowTokens && !key.limitMonthTokens
+                        ? 'безлимит'
+                        : [
+                            key.limitWindowTokens
+                              ? `окно ${formatTokens(key.limitWindowTokens)}`
+                              : null,
+                            key.limitMonthTokens
+                              ? `мес ${formatTokens(key.limitMonthTokens)}`
+                              : null,
+                            key.allowedModels.length > 0
+                              ? `моделей ${key.allowedModels.length}`
+                              : null,
+                          ]
+                            .filter(Boolean)
+                            .join(' · ')}
+                    </td>
+                    <td>{formatDateTime(key.createdAt)}</td>
+                    <td>{key.lastUsedAt ? formatDateTime(key.lastUsedAt) : '—'}</td>
+                    <td>{key.revokedAt ? 'отозван' : 'активен'}</td>
+                    <td>
+                      {key.revokedAt === null && (
+                        <>
+                          <button
+                            className="button button-small"
+                            onClick={() => setEditingKeyId(key.id)}
+                          >
+                            Квоты
+                          </button>{' '}
+                          <button
+                            className="button button-small button-danger"
+                            onClick={() => revokeKey(key)}
+                          >
+                            Отозвать
+                          </button>
+                        </>
+                      )}
+                    </td>
+                  </tr>
+                ),
+              )}
             </tbody>
           </table>
         )}
