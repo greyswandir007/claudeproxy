@@ -41,8 +41,10 @@ class DynamicModelRegistry(
     private fun reloadBlocking() {
         val providersById = HashMap<Long, ModelRegistry.ProviderInfo>()
         val providerExposedById = HashMap<Long, Boolean>()
+        val effortMappingById = HashMap<Long, Map<String, String>>()
+        val settingOverridesById = HashMap<Long, Map<String, String>>()
         jdbcTemplate.query(
-            "SELECT id, name, type, base_url, api_key, extra_headers, exposed FROM provider",
+            "SELECT id, name, type, base_url, api_key, extra_headers, exposed, effort_mapping FROM provider",
         ) { resultSet ->
             val identifier = resultSet.getLong("id")
             providersById[identifier] = ModelRegistry.ProviderInfo(
@@ -54,8 +56,26 @@ class DynamicModelRegistry(
                     resultSet.getString("api_key"),
                 ),
                 extraHeaders = parseExtraHeaders(resultSet.getString("extra_headers")),
+                effortMapping = emptyMap(),
+                settingOverrides = emptyMap(),
             )
             providerExposedById[identifier] = resultSet.getInt("exposed") == 1
+            effortMappingById[identifier] =
+                parseEffortMapping(resultSet.getString("effort_mapping"))
+        }
+        jdbcTemplate.query(
+            "SELECT provider_id, setting_key, setting_value FROM provider_setting",
+        ) { resultSet ->
+            settingOverridesById
+                .getOrPut(resultSet.getLong("provider_id")) { HashMap() }
+                .let { it as MutableMap }
+                .put(resultSet.getString("setting_key"), resultSet.getString("setting_value"))
+        }
+        providersById.forEach { (identifier, provider) ->
+            providersById[identifier] = provider.copy(
+                effortMapping = effortMappingById[identifier] ?: emptyMap(),
+                settingOverrides = settingOverridesById[identifier] ?: emptyMap(),
+            )
         }
         val routesByName = LinkedHashMap<String, MutableList<ModelRegistry.Route>>()
         val exposedNames = LinkedHashSet<String>()
@@ -100,6 +120,22 @@ class DynamicModelRegistry(
         }.getOrDefault(emptyMap<Any, Any>()).entries.associate { (key, value) ->
             key.toString() to value.toString()
         }
+    }
+
+    /** {"levels":{"low":"...",...}} → карта уровней; пустая — маппер выключен. */
+    private fun parseEffortMapping(effortMappingJson: String?): Map<String, String> {
+        if (effortMappingJson.isNullOrBlank()) return emptyMap()
+        val levelsNode = runCatching {
+            objectMapper.readTree(effortMappingJson).path("levels")
+        }.getOrNull() ?: return emptyMap()
+        if (!levelsNode.isObject) return emptyMap()
+        val result = HashMap<String, String>()
+        levelsNode.fields().forEach { entry ->
+            if (entry.value.isTextual && entry.value.asText().isNotBlank()) {
+                result[entry.key] = entry.value.asText()
+            }
+        }
+        return result
     }
 
     /** Страховка на случай запроса до первого reload (сид должен загрузить раньше). */

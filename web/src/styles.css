@@ -726,6 +726,64 @@ th.numeric {
   background: var(--series-blue);
 }
 
+.effort-mapper {
+  margin: 10px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.effort-mapper-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 8px 12px;
+}
+
+.effort-mapper-grid label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.effort-mapper-grid input {
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  color: var(--text-primary);
+  border-radius: 8px;
+  font: inherit;
+  padding: 6px 10px;
+}
+
+.overrides-block {
+  margin: 10px 0;
+}
+
+.override-name {
+  font-size: 13px;
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.add-override-row {
+  display: flex;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.add-override-row select {
+  flex: 1;
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  color: var(--text-primary);
+  border-radius: 8px;
+  font: inherit;
+  padding: 6px 10px;
+}
+
 .limit-bars {
   margin: 0 0 12px;
   display: flex;

@@ -10,6 +10,7 @@ import org.springframework.stereotype.Service
 import ru.wizard.web.claudeproxy.config.ProxyProperties
 import ru.wizard.web.claudeproxy.db.DatabaseProvider
 import ru.wizard.web.claudeproxy.providers.ProviderModelService
+import ru.wizard.web.claudeproxy.providers.ProviderSettingCatalog
 import ru.wizard.web.claudeproxy.proxy.ApiError
 import ru.wizard.web.claudeproxy.routing.ModelRegistry
 
@@ -87,11 +88,14 @@ class JdbcProviderModelService(
             validateProviderRequest(request)
             requireUniqueProviderName(request.name)
             val now = System.currentTimeMillis()
+            validateEffortMapping(request.effortMapping)
+            validateSettingOverrides(request.settingOverrides)
             jdbcTemplate.update(
                 """INSERT INTO provider
                    (name, type, base_url, api_key, extra_headers, exposed,
-                    limit_window_tokens, limit_week_tokens, limit_month_tokens, created_at, updated_at)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+                    limit_window_tokens, limit_week_tokens, limit_month_tokens,
+                    effort_mapping, created_at, updated_at)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
                 request.name,
                 request.type,
                 request.baseUrl,
@@ -101,9 +105,11 @@ class JdbcProviderModelService(
                 request.limitWindowTokens,
                 request.limitWeekTokens,
                 request.limitMonthTokens,
+                effortMappingJson(request.effortMapping),
                 now,
                 now,
             )
+            replaceSettingOverrides(findProviderIdByName(request.name)!!, request.settingOverrides)
             loadProvider(findProviderIdByName(request.name)!!)
         }
         modelRegistry.reload()
@@ -126,14 +132,18 @@ class JdbcProviderModelService(
                 throw conflict("Провайдер с именем '${request.name}' уже существует")
             }
             val updateApiKey = !request.apiKey.isNullOrBlank()
+            validateEffortMapping(request.effortMapping)
+            validateSettingOverrides(request.settingOverrides)
             jdbcTemplate.update(
                 """UPDATE provider SET name = ?, type = ?, base_url = ?, extra_headers = ?,
-                   limit_window_tokens = ?, limit_week_tokens = ?, limit_month_tokens = ?""" +
+                   limit_window_tokens = ?, limit_week_tokens = ?, limit_month_tokens = ?,
+                   effort_mapping = ?""" +
                     (if (request.exposed != null) ", exposed = ?" else "") +
                     (if (updateApiKey) ", api_key = ?" else "") +
                     ", updated_at = ? WHERE id = ?",
                 *buildUpdateProviderArguments(request, id, updateApiKey).toTypedArray(),
             )
+            replaceSettingOverrides(id, request.settingOverrides)
             loadProvider(id)
         }
         modelRegistry.reload()
@@ -295,7 +305,7 @@ class JdbcProviderModelService(
         return providerIds.map { loadProvider(it) }
     }
 
-    /** Аргументы UPDATE provider в порядке SET-плейсхолдеров (лимиты перезаписываются все). */
+    /** Аргументы UPDATE provider в порядке SET-плейсхолдеров (лимиты и маппер перезаписываются). */
     private fun buildUpdateProviderArguments(
         request: ProviderModelService.ProviderRequest,
         id: Long,
@@ -309,6 +319,7 @@ class JdbcProviderModelService(
         arguments.add(request.limitWindowTokens)
         arguments.add(request.limitWeekTokens)
         arguments.add(request.limitMonthTokens)
+        arguments.add(effortMappingJson(request.effortMapping))
         if (request.exposed != null) {
             arguments.add(if (request.exposed) 1 else 0)
         }
@@ -320,12 +331,61 @@ class JdbcProviderModelService(
         return arguments
     }
 
+    /** {"levels":{...}} — только непустые значения; null-запрос = выключен. */
+    private fun effortMappingJson(effortMapping: Map<String, String>?): String {
+        val cleanLevels = (effortMapping ?: emptyMap()).filterValues { it.isNotBlank() }
+        val wrapper = objectMapper.createObjectNode()
+        wrapper.set<com.fasterxml.jackson.databind.JsonNode>(
+            "levels",
+            objectMapper.valueToTree(cleanLevels),
+        )
+        return objectMapper.writeValueAsString(wrapper)
+    }
+
+    private fun validateEffortMapping(effortMapping: Map<String, String>?) {
+        effortMapping?.forEach { (level, value) ->
+            val canonical = ProviderSettingCatalog.normalizeEffortLevel(level)
+            if (canonical !in ProviderSettingCatalog.EFFORT_LEVELS) {
+                throw badRequest(
+                    "effortMapping: неизвестный уровень '$level' (ожидается " +
+                        "${ProviderSettingCatalog.EFFORT_LEVELS.joinToString(", ")})",
+                )
+            }
+            if (value.isBlank()) {
+                throw badRequest("effortMapping: пустое значение для уровня '$level'")
+            }
+        }
+    }
+
+    private fun validateSettingOverrides(settingOverrides: Map<String, String>?) {
+        settingOverrides?.forEach { (key, value) ->
+            val definition = ProviderSettingCatalog.definition(key)
+                ?: throw badRequest("settingOverrides: неизвестная настройка '$key'")
+            ProviderSettingCatalog.validate(key, value)?.let { validationError ->
+                throw badRequest("settingOverrides [$key]: $validationError")
+            }
+        }
+    }
+
+    /** Полная замена оверрайдов провайдера. */
+    private fun replaceSettingOverrides(providerId: Long, settingOverrides: Map<String, String>?) {
+        jdbcTemplate.update("DELETE FROM provider_setting WHERE provider_id = ?", providerId)
+        settingOverrides?.forEach { (key, value) ->
+            jdbcTemplate.update(
+                "INSERT INTO provider_setting (provider_id, setting_key, setting_value) VALUES (?,?,?)",
+                providerId,
+                key,
+                value.trim(),
+            )
+        }
+    }
+
     private fun loadProvider(id: Long): ProviderModelService.ProviderView {
         val providerRows = ArrayList<Array<Any?>>()
         jdbcTemplate.query(
             """SELECT name, type, base_url, api_key, extra_headers, exposed,
                       limit_window_tokens, limit_week_tokens, limit_month_tokens,
-                      created_at, updated_at
+                      effort_mapping, created_at, updated_at
                FROM provider WHERE id = ?""",
             { resultSet ->
                 providerRows.add(
@@ -339,8 +399,9 @@ class JdbcProviderModelService(
                         resultSet.getLong(7).takeIf { !resultSet.wasNull() },
                         resultSet.getLong(8).takeIf { !resultSet.wasNull() },
                         resultSet.getLong(9).takeIf { !resultSet.wasNull() },
-                        resultSet.getLong(10),
+                        resultSet.getString(10) ?: "{}",
                         resultSet.getLong(11),
+                        resultSet.getLong(12),
                     ),
                 )
             },
@@ -369,6 +430,14 @@ class JdbcProviderModelService(
             },
             id,
         )
+        val settingOverrides = HashMap<String, String>()
+        jdbcTemplate.query(
+            "SELECT setting_key, setting_value FROM provider_setting WHERE provider_id = ?",
+            { resultSet ->
+                settingOverrides[resultSet.getString(1)] = resultSet.getString(2)
+            },
+            id,
+        )
         return ProviderModelService.ProviderView(
             id = id,
             name = row[0] as String,
@@ -380,11 +449,21 @@ class JdbcProviderModelService(
             limitWindowTokens = row[6] as Long?,
             limitWeekTokens = row[7] as Long?,
             limitMonthTokens = row[8] as Long?,
+            effortMapping = parseEffortMapping(row[9] as String),
+            settingOverrides = settingOverrides,
             models = models,
-            createdAt = row[9] as Long,
-            updatedAt = row[10] as Long,
+            createdAt = row[10] as Long,
+            updatedAt = row[11] as Long,
         )
     }
+
+    /** {"levels":{...}} → карта уровней (только непустые значения). */
+    private fun parseEffortMapping(effortMappingJson: String): Map<String, String> =
+        runCatching {
+            objectMapper.readTree(effortMappingJson).path("levels").fields().asSequence()
+                .filter { it.value.isTextual && it.value.asText().isNotBlank() }
+                .associate { it.key to it.value.asText() }
+        }.getOrDefault(emptyMap())
 
     private fun loadModel(id: Long): ProviderModelService.ModelView {
         val models = ArrayList<ProviderModelService.ModelView>()

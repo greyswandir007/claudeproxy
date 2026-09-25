@@ -1,5 +1,10 @@
 import { useState } from 'react'
-import { api, type ManagedProvider } from '../api/client'
+import {
+  api,
+  EFFORT_LEVELS,
+  SETTING_CATALOG,
+  type ManagedProvider,
+} from '../api/client'
 import KeyValueRows from './KeyValueRows'
 
 // Форма провайдера. Базовый набор: имя, тип, base-url, api-ключ.
@@ -13,6 +18,13 @@ const millionsOf = (tokens: number): number => Math.round((tokens / 1_000_000) *
 const millionsToTokens = (value: string): number | null => {
   const parsed = Number(value.replace(',', '.'))
   return Number.isFinite(parsed) && parsed > 0 ? Math.round(parsed * 1_000_000) : null
+}
+
+/** Ключи каталога оверрайдов, доступные для добавления (добавленные скрыты). */
+function availableSettingKeys(settingOverrides: Record<string, string>): string[] {
+  return SETTING_CATALOG.map((definition) => definition.key).filter(
+    (key) => !(key in settingOverrides),
+  )
 }
 
 export default function ProviderForm({
@@ -43,6 +55,20 @@ export default function ProviderForm({
   const [limitMonthTokens, setLimitMonthTokens] = useState(
     provider?.limitMonthTokens != null ? String(millionsOf(provider.limitMonthTokens)) : '',
   )
+  const [effortMapperEnabled, setEffortMapperEnabled] = useState(
+    Object.keys(provider?.effortMapping ?? {}).length > 0,
+  )
+  const [effortLevels, setEffortLevels] = useState<Record<string, string>>({
+    low: provider?.effortMapping?.low ?? 'low',
+    medium: provider?.effortMapping?.medium ?? 'medium',
+    high: provider?.effortMapping?.high ?? 'high',
+    xhigh: provider?.effortMapping?.xhigh ?? 'xhigh',
+    max: provider?.effortMapping?.max ?? 'max',
+  })
+  const [settingOverrides, setSettingOverrides] = useState<Record<string, string>>(
+    { ...(provider?.settingOverrides ?? {}) },
+  )
+  const [selectedSettingKey, setSelectedSettingKey] = useState('')
   const [showExtended, setShowExtended] = useState(isEditMode)
 
   const [discoveredModels, setDiscoveredModels] = useState<string[]>([])
@@ -117,6 +143,14 @@ export default function ProviderForm({
       limitWindowTokens: millionsToTokens(limitWindowTokens),
       limitWeekTokens: millionsToTokens(limitWeekTokens),
       limitMonthTokens: millionsToTokens(limitMonthTokens),
+      effortMapping: effortMapperEnabled
+        ? Object.fromEntries(
+            EFFORT_LEVELS.filter((level) => effortLevels[level]?.trim().length > 0).map(
+              (level) => [level, effortLevels[level].trim()],
+            ),
+          )
+        : {},
+      settingOverrides,
     }
     const result = isEditMode
       ? api.updateProvider(provider.id, request)
@@ -251,6 +285,101 @@ export default function ProviderForm({
             rows={extraHeaderRows}
             onChange={setExtraHeaderRows}
           />
+          <div className="effort-mapper">
+            <label className="checkbox-label">
+              <input
+                type="checkbox"
+                checked={effortMapperEnabled}
+                onChange={(event) => setEffortMapperEnabled(event.target.checked)}
+              />
+              <strong>Маппер effort-уровней</strong>
+              <span className="muted">
+                вход low/medium/high/xhigh/max (+ middle/ultra как синонимы) → значения провайдера;
+                выключен — уровни пробрасываются как есть
+              </span>
+            </label>
+            {effortMapperEnabled && (
+              <div className="effort-mapper-grid">
+                {EFFORT_LEVELS.map((level) => (
+                  <label key={level}>
+                    {level}
+                    <input
+                      type="text"
+                      value={effortLevels[level] ?? ''}
+                      placeholder={level}
+                      onChange={(event) =>
+                        setEffortLevels((current) => ({ ...current, [level]: event.target.value }))
+                      }
+                    />
+                  </label>
+                ))}
+              </div>
+            )}
+          </div>
+          <div className="overrides-block">
+            <div className="key-value-title">Оверрайды входных параметров</div>
+            {Object.entries(settingOverrides).map(([key, value]) => (
+              <div key={key} className="discovered-row">
+                <span className="override-name" title={SETTING_CATALOG.find((d) => d.key === key)?.description}>
+                  {SETTING_CATALOG.find((d) => d.key === key)?.title ?? key}
+                </span>
+                <input
+                  type="text"
+                  className="discovered-public-name"
+                  value={value}
+                  placeholder={
+                    SETTING_CATALOG.find((d) => d.key === key)?.placeholder ?? 'значение'
+                  }
+                  onChange={(event) =>
+                    setSettingOverrides((current) => ({ ...current, [key]: event.target.value }))
+                  }
+                />
+                <button
+                  type="button"
+                  className="button button-danger button-small"
+                  onClick={() =>
+                    setSettingOverrides((current) => {
+                      const next = { ...current }
+                      delete next[key]
+                      return next
+                    })
+                  }
+                >
+                  ✕
+                </button>
+              </div>
+            ))}
+            {availableSettingKeys(settingOverrides).length > 0 && (
+              <div className="add-override-row">
+                <select
+                  value={selectedSettingKey}
+                  onChange={(event) => setSelectedSettingKey(event.target.value)}
+                >
+                  <option value="">выберите настройку…</option>
+                  {availableSettingKeys(settingOverrides).map((key) => (
+                    <option key={key} value={key}>
+                      {SETTING_CATALOG.find((d) => d.key === key)?.title ?? key}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  className="button button-small"
+                  disabled={selectedSettingKey.length === 0}
+                  onClick={() => {
+                    const definition = SETTING_CATALOG.find((d) => d.key === selectedSettingKey)
+                    setSettingOverrides((current) => ({
+                      ...current,
+                      [selectedSettingKey]: definition?.placeholder ?? '',
+                    }))
+                    setSelectedSettingKey('')
+                  }}
+                >
+                  + добавить
+                </button>
+              </div>
+            )}
+          </div>
         </>
       ) : (
         <button type="button" className="button button-small" onClick={() => setShowExtended(true)}>

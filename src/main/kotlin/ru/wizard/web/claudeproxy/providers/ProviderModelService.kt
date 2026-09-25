@@ -18,6 +18,10 @@ interface ProviderModelService {
         val limitWindowTokens: Long?,
         val limitWeekTokens: Long?,
         val limitMonthTokens: Long?,
+        /** Канонический уровень → значение провайдера; пустая карта — маппер выключен. */
+        val effortMapping: Map<String, String>,
+        /** Оверрайды (ключи из ProviderSettingCatalog). */
+        val settingOverrides: Map<String, String>,
         val models: List<ModelView>,
         val createdAt: Long,
         val updatedAt: Long,
@@ -47,6 +51,10 @@ interface ProviderModelService {
         val limitWindowTokens: Long?,
         val limitWeekTokens: Long?,
         val limitMonthTokens: Long?,
+        /** Маппер effort-уровней; при обновлении перезаписывается целиком. */
+        val effortMapping: Map<String, String>?,
+        /** Оверрайды; при обновлении перезаписываются целиком. */
+        val settingOverrides: Map<String, String>?,
     )
 
     data class ModelRequest(

@@ -1,6 +1,7 @@
 package ru.wizard.web.claudeproxy.proxy.openai.impl
 
 import com.fasterxml.jackson.databind.JsonNode
+import com.fasterxml.jackson.databind.node.ObjectNode
 import com.fasterxml.jackson.databind.ObjectMapper
 import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.reactor.awaitSingle
@@ -19,6 +20,7 @@ import ru.wizard.web.claudeproxy.auth.ApiKeyAuthFilter
 import ru.wizard.web.claudeproxy.proxy.UsageAccumulator
 import ru.wizard.web.claudeproxy.proxy.UpstreamError
 import ru.wizard.web.claudeproxy.proxy.UpstreamRetryPolicy
+import ru.wizard.web.claudeproxy.proxy.ProviderRequestAdjuster
 import ru.wizard.web.claudeproxy.proxy.openai.OpenAiHandler
 import ru.wizard.web.claudeproxy.routing.ModelRegistry
 import ru.wizard.web.claudeproxy.usage.UsageEvent
@@ -35,6 +37,7 @@ class WebClientOpenAiHandler(
     private val webClient: WebClient,
     private val objectMapper: ObjectMapper,
     private val usageRecorder: UsageRecorder,
+    private val requestAdjuster: ProviderRequestAdjuster,
 ) : OpenAiHandler {
     private val logger = KotlinLogging.logger {}
 
@@ -251,7 +254,8 @@ class WebClientOpenAiHandler(
         requestRoot: JsonNode,
     ): WebClient.RequestHeadersSpec<*> {
         val provider = route.provider
-        val translatedRequest = requestTranslator.translate(requestRoot, route)
+        val adjustedRoot = requestAdjuster.adjust(requestRoot as ObjectNode, provider)
+        val translatedRequest = requestTranslator.translate(adjustedRoot, route)
         val requestSpecification = webClient.post()
             .uri(provider.baseUrl.trimEnd('/') + "/chat/completions")
             .contentType(MediaType.APPLICATION_JSON)

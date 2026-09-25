@@ -14,6 +14,8 @@ object UpstreamRetryPolicy {
         is UpstreamError -> isRetryableStatus(error.status.value())
         is WebClientRequestException -> true
         is WebClientResponseException -> isRetryableStatus(error.statusCode.value())
+        // API_TIMEOUT_MS: провайдер молчит — переключаемся на следующий маршрут
+        is java.util.concurrent.TimeoutException -> true
         else -> false
     }
 

@@ -15,6 +15,11 @@ interface ModelRegistry {
         val baseUrl: String,
         val apiKey: String,
         val extraHeaders: Map<String, String>,
+        /** Маппер effort-уровней: канонический (low/medium/high/xhigh/max) → значение
+         *  провайдера. Пустая карта — маппер выключен, уровни пробрасываются как есть. */
+        val effortMapping: Map<String, String>,
+        /** Оверрайды входных параметров (ключи из ProviderSettingCatalog). */
+        val settingOverrides: Map<String, String>,
     )
 
     data class ModelInfo(

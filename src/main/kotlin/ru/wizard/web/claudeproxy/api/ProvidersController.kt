@@ -130,6 +130,8 @@ class ProvidersController(
             limitWindowTokens = optionalLimit(node, "limitWindowTokens"),
             limitWeekTokens = optionalLimit(node, "limitWeekTokens"),
             limitMonthTokens = optionalLimit(node, "limitMonthTokens"),
+            effortMapping = toStringMap(node.path("effortMapping").takeIf { it.isObject }),
+            settingOverrides = toStringMap(node.path("settingOverrides").takeIf { it.isObject }),
         )
     }
 
@@ -153,7 +155,9 @@ class ProvidersController(
     private fun optionalLimit(node: JsonNode, field: String): Long? =
         node.path(field).takeIf { it.isNumber && it.asLong() > 0 }?.asLong()
 
-    private fun toStringMap(node: JsonNode): Map<String, String> {
+    /** Объект JSON → карта строк; null-узел (нет поля) — пустая карта. */
+    private fun toStringMap(node: JsonNode?): Map<String, String> {
+        if (node == null || !node.isObject) return emptyMap()
         val result = HashMap<String, String>()
         node.fields().forEach { entry -> result[entry.key] = entry.value.asText() }
         return result

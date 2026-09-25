@@ -132,6 +132,8 @@ export interface ManagedProvider {
   limitWindowTokens: number | null
   limitWeekTokens: number | null
   limitMonthTokens: number | null
+  effortMapping: Record<string, string>
+  settingOverrides: Record<string, string>
   models: ManagedModel[]
   createdAt: number
   updatedAt: number
@@ -147,7 +149,31 @@ export interface ProviderRequest {
   limitWindowTokens?: number | null
   limitWeekTokens?: number | null
   limitMonthTokens?: number | null
+  effortMapping?: Record<string, string>
+  settingOverrides?: Record<string, string>
 }
+
+/** Каталог оверрайдов — зеркалит ProviderSettingCatalog бэкенда. */
+export interface SettingDefinition {
+  key: string
+  title: string
+  description: string
+  valueType: 'LONG' | 'DOUBLE' | 'EFFORT_LEVEL' | 'BOOLEAN' | 'NON_EMPTY_TEXT'
+  placeholder: string
+}
+
+export const SETTING_CATALOG: SettingDefinition[] = [
+  { key: 'API_TIMEOUT_MS', title: 'Таймаут вызова провайдера, мс', description: 'Молчание провайдера дольше — обрыв и переключение на следующий маршрут', valueType: 'LONG', placeholder: '120000' },
+  { key: 'MAX_OUTPUT_TOKENS', title: 'Потолок max_tokens', description: 'max_tokens запроса ужимается до этого значения', valueType: 'LONG', placeholder: '8192' },
+  { key: 'MAX_INPUT_TOKENS', title: 'Лимит входных токенов', description: 'Оценка входа выше — вежливый 413', valueType: 'LONG', placeholder: '200000' },
+  { key: 'TEMPERATURE_OVERRIDE', title: 'Температура (переопределение)', description: 'temperature заменяется этим значением', valueType: 'DOUBLE', placeholder: '0.2' },
+  { key: 'TOP_P_OVERRIDE', title: 'top_p (переопределение)', description: 'top_p заменяется этим значением', valueType: 'DOUBLE', placeholder: '0.9' },
+  { key: 'FORCED_REASONING_EFFORT', title: 'Принудительный effort', description: 'Уровень effort после маппера', valueType: 'EFFORT_LEVEL', placeholder: 'medium' },
+  { key: 'DISABLE_THINKING', title: 'Выключить thinking', description: 'Запрос уходит с thinking: disabled', valueType: 'BOOLEAN', placeholder: 'true' },
+  { key: 'EXTRA_STOP_SEQUENCE', title: 'Доп. stop-последовательность', description: 'Добавляется к stop_sequences', valueType: 'NON_EMPTY_TEXT', placeholder: '</end>' },
+]
+
+export const EFFORT_LEVELS = ['low', 'medium', 'high', 'xhigh', 'max'] as const
 
 export interface ModelTokens {
   modelName: string

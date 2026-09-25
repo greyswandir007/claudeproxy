@@ -832,6 +832,79 @@ class ProxyIntegrationTest {
         webTestClient.delete().uri("/api/providers/$providerId").exchange().expectStatus().isNoContent
     }
 
+    @Test
+    fun `маппер effort и оверрайды применяются к запросу провайдера`() {
+        // провайдер: маппер high→low + потолок max_tokens + температура
+        val createdProvider = webTestClient.post().uri("/api/providers")
+            .contentType(MediaType.APPLICATION_JSON)
+            .bodyValue(
+                """{"name":"m9-provider","type":"openai",
+                    "baseUrl":"http://127.0.0.1:${upstreamPort()}","apiKey":"m9-secret",
+                    "effortMapping":{"high":"low"},
+                    "settingOverrides":{"MAX_OUTPUT_TOKENS":64,"TEMPERATURE_OVERRIDE":0.7}}""",
+            )
+            .exchange().expectStatus().isCreated
+            .expectBody(String::class.java).returnResult().responseBody!!
+        val providerId = objectMapper.readTree(createdProvider).path("id").asLong()
+        webTestClient.post().uri("/api/providers/$providerId/models")
+            .contentType(MediaType.APPLICATION_JSON)
+            .bodyValue(
+                """{"publicName":"m9-model","upstreamName":"echo-model",
+                    "reasoning":"map","maxCompletionParam":false,"priority":100}""",
+            )
+            .exchange().expectStatus().isCreated
+
+        // запрос с effort high → провайдеру уходит low; max_tokens ужимается; температура переопределена
+        val responseBody = webTestClient.post().uri("/v1/messages")
+            .header("x-api-key", SEED_API_KEY)
+            .contentType(MediaType.APPLICATION_JSON)
+            .bodyValue(
+                """{"model":"m9-model","max_tokens":1000,"temperature":0.1,
+                    "thinking":{"type":"adaptive"},"output_config":{"effort":"high"},
+                    "messages":[{"role":"user","content":"привет"}]}""",
+            )
+            .exchange().expectStatus().isOk
+            .expectBody(String::class.java).returnResult().responseBody!!
+        val echo = objectMapper.readTree(
+            objectMapper.readTree(responseBody)
+                .path("content").get(0).path("text").asText().removePrefix("echo:"),
+        )
+        assertEquals("low", echo.path("reasoning_effort").asText())
+        assertEquals(64L, echo.path("max_tokens").asLong())
+        assertEquals("0.7", echo.path("temperature").asText())
+
+        // отображение настроек в /api/providers
+        val providerListBody = webTestClient.get().uri("/api/providers")
+            .exchange().expectStatus().isOk
+            .expectBody(String::class.java).returnResult().responseBody!!
+        val m9Provider = objectMapper.readTree(providerListBody)
+            .firstOrNull { it.path("name").asText() == "m9-provider" }!!
+        assertEquals("low", m9Provider.path("effortMapping").path("high").asText())
+        assertEquals("64", m9Provider.path("settingOverrides").path("MAX_OUTPUT_TOKENS").asText())
+
+        // MAX_INPUT_TOKENS: слишком большой вход — вежливый 413
+        webTestClient.put().uri("/api/providers/$providerId")
+            .contentType(MediaType.APPLICATION_JSON)
+            .bodyValue(
+                """{"name":"m9-provider","type":"openai",
+                    "baseUrl":"http://127.0.0.1:${upstreamPort()}",
+                    "settingOverrides":{"MAX_INPUT_TOKENS":100}}""",
+            )
+            .exchange().expectStatus().isOk
+        webTestClient.post().uri("/v1/messages")
+            .header("x-api-key", SEED_API_KEY)
+            .contentType(MediaType.APPLICATION_JSON)
+            .bodyValue(
+                """{"model":"m9-model","max_tokens":10,
+                    "messages":[{"role":"user","content":"${"x".repeat(1000)}"}]}""",
+            )
+            .exchange().expectStatus().isEqualTo(413)
+            .expectBody()
+            .jsonPath("$.error.type").isEqualTo("request_too_large")
+
+        webTestClient.delete().uri("/api/providers/$providerId").exchange().expectStatus().isNoContent
+    }
+
     private fun asLong(value: Any?): Long = (value as Number).toLong()
 
     private fun awaitUsageEventRows(condition: String): List<Map<String, Any?>> = runBlocking {
@@ -901,6 +974,36 @@ class ProxyIntegrationTest {
                                             CharsetUtil.UTF_8,
                                         )
                                         .then()
+
+                                model == "echo-model" && !request.uri().endsWith("/count_tokens") -> {
+                                    // echo: возвращает параметры запроса в контенте — проверка маппера/оверрайдов
+                                    val echoed = objectMapper.createObjectNode().apply {
+                                        put("reasoning_effort", requestNode?.path("reasoning_effort")?.asText("") ?: "")
+                                        put("max_tokens", requestNode?.path("max_tokens")?.asLong(0) ?: 0L)
+                                        put("temperature", requestNode?.path("temperature")?.asText("") ?: "")
+                                        put("stop", requestNode?.path("stop")?.toString() ?: "")
+                                    }
+                                    val echoBody = objectMapper.createObjectNode().apply {
+                                        put("id", "chatcmpl-echo")
+                                        put("object", "chat.completion")
+                                        put("created", 1L)
+                                        put("model", "echo-model")
+                                        val choice = putArray("choices").addObject()
+                                        choice.put("index", 0)
+                                        val message = choice.putObject("message")
+                                        message.put("role", "assistant")
+                                        message.put("content", "echo:" + echoed.toString())
+                                        choice.put("finish_reason", "stop")
+                                        val usage = putObject("usage")
+                                        usage.put("prompt_tokens", 1)
+                                        usage.put("completion_tokens", 1)
+                                        usage.put("total_tokens", 2)
+                                    }
+                                    response.status(HttpResponseStatus.OK)
+                                        .header("Content-Type", "application/json")
+                                        .sendString(Mono.just(echoBody.toString()), CharsetUtil.UTF_8)
+                                        .then()
+                                }
 
                                 request.uri().endsWith("/chat/completions") ->
                                     handleChatCompletions(requestNode, response)

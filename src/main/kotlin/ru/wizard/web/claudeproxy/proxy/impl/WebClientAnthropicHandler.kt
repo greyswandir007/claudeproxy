@@ -16,6 +16,7 @@ import reactor.core.publisher.Flux
 import reactor.core.publisher.SignalType
 import ru.wizard.web.claudeproxy.auth.ApiKeyAuthFilter
 import ru.wizard.web.claudeproxy.proxy.AnthropicHandler
+import ru.wizard.web.claudeproxy.proxy.ProviderRequestAdjuster
 import ru.wizard.web.claudeproxy.proxy.SseUsageSniffer
 import ru.wizard.web.claudeproxy.proxy.UpstreamError
 import ru.wizard.web.claudeproxy.proxy.UpstreamRetryPolicy
@@ -34,6 +35,7 @@ class WebClientAnthropicHandler(
     private val webClient: WebClient,
     private val objectMapper: ObjectMapper,
     private val usageRecorder: UsageRecorder,
+    private val requestAdjuster: ProviderRequestAdjuster,
 ) : AnthropicHandler {
     private val logger = KotlinLogging.logger {}
 
@@ -214,6 +216,7 @@ class WebClientAnthropicHandler(
         val provider = route.provider
         val rewrittenRequest = (requestRoot as ObjectNode).deepCopy()
             .put("model", route.mapping.upstreamName)
+        requestAdjuster.adjust(rewrittenRequest, provider)
         val requestSpecification = webClient.post()
             .uri(provider.baseUrl.trimEnd('/') + upstreamPath)
             .contentType(MediaType.APPLICATION_JSON)
