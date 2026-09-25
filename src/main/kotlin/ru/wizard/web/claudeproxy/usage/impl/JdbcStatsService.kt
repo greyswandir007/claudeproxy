@@ -330,13 +330,15 @@ class JdbcStatsService(
         val perMillion: Double?,
         val monthly: Double?,
         val monthLimitTokens: Long?,
+        val weekLimitTokens: Long?,
+        val windowLimitTokens: Long?,
     )
 
     private fun providerCostsBlocking(): List<StatsService.ProviderCost> {
         val pricingRows = ArrayList<PricingRow>()
         jdbcTemplate.query(
             """SELECT name, pricing_mode, price_per_million_tokens, price_monthly,
-                      limit_month_tokens
+                      limit_month_tokens, limit_week_tokens, limit_window_tokens
                FROM provider WHERE pricing_mode <> '' ORDER BY created_at, id""",
         ) { resultSet ->
             pricingRows.add(
@@ -346,12 +348,18 @@ class JdbcStatsService(
                     perMillion = resultSet.getDouble(3).takeIf { !resultSet.wasNull() },
                     monthly = resultSet.getDouble(4).takeIf { !resultSet.wasNull() },
                     monthLimitTokens = resultSet.getLong(5).takeIf { !resultSet.wasNull() },
+                    weekLimitTokens = resultSet.getLong(6).takeIf { !resultSet.wasNull() },
+                    windowLimitTokens = resultSet.getLong(7).takeIf { !resultSet.wasNull() },
                 ),
             )
         }
         val now = System.currentTimeMillis()
         return pricingRows.map { pricing ->
+            // месячный лимит: явный, иначе выводим из недельного/оконного
+            // (те же коэффициенты, что у производных лимитов)
             val monthLimit = pricing.monthLimitTokens
+                ?: pricing.weekLimitTokens?.let { Math.round(it * WEEKS_PER_MONTH) }
+                ?: pricing.windowLimitTokens?.let { it * WINDOWS_PER_MONTH }
             var perMillion = pricing.perMillion
             var perMillionDerived = false
             var monthly = pricing.monthly

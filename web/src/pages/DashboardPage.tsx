@@ -187,23 +187,19 @@ export default function DashboardPage({ refreshTick }: { refreshTick: number }) 
             .timelineRange(bucket, keyParameter, from, to)
             .then((points: TimelinePoint[]) => {
               setTimelineRows(
-                points.map((point) => ({
-                  sortKey: point.bucketStartMilliseconds,
-                  label:
-                    bucket === 'hour'
-                      ? new Date(point.bucketStartMilliseconds).toLocaleTimeString('ru-RU', {
-                          hour: '2-digit',
-                          minute: '2-digit',
-                        })
-                      : new Date(point.bucketStartMilliseconds).toLocaleDateString('ru-RU', {
-                          day: '2-digit',
-                          month: '2-digit',
-                        }),
-                  inputTokens: point.inputTokens,
-                  outputTokens: point.outputTokens,
-                  cacheReadTokens: point.cacheReadTokens,
-                  cacheCreationTokens: point.cacheCreationTokens,
-                })),
+                fillTimelineGaps(
+                  points.map((point) => ({
+                    sortKey: point.bucketStartMilliseconds,
+                    label: formatBucketLabel(point.bucketStartMilliseconds, bucket),
+                    inputTokens: point.inputTokens,
+                    outputTokens: point.outputTokens,
+                    cacheReadTokens: point.cacheReadTokens,
+                    cacheCreationTokens: point.cacheCreationTokens,
+                  })),
+                  from,
+                  to,
+                  bucket,
+                ),
               )
               setTimelineLabels(TOTAL_SERIES.map((series) => ({ ...series })))
             })
@@ -211,7 +207,9 @@ export default function DashboardPage({ refreshTick }: { refreshTick: number }) 
             .groupedTimeline(bucket, keyParameter, from, to, sliceMode)
             .then((points: GroupedTimelinePoint[]) => {
               const pivoted = pivotGroupedTimeline(points, bucket)
-              setTimelineRows(pivoted.data)
+              setTimelineRows(
+                fillTimelineGaps(pivoted.data, from, to, bucket, pivoted.labels.map((entry) => entry.key)),
+              )
               setTimelineLabels(pivoted.labels)
             })
     timelineRequest.catch((loadError: Error) => setError(loadError.message))
@@ -336,4 +334,53 @@ function dayStart(offsetDays: number): number {
   const date = new Date()
   date.setHours(0, 0, 0, 0)
   return date.getTime() - offsetDays * DAY
+}
+
+/**
+ * Полная шкала бакетов: 24 часа для дня, 7 дней для недели и т.д. —
+ * недостающие точки заполняются нулями, чтобы график был ровным.
+ * total-режим: нули по фиксированным ключам; срезы — по динамическим
+ * seriesKeys (передаются из pivotGroupedTimeline).
+ */
+function fillTimelineGaps(
+  rows: Record<string, number | string>[],
+  from: number,
+  to: number,
+  bucket: 'hour' | 'day',
+  seriesKeys?: string[],
+): Record<string, number | string>[] {
+  const bucketSize = bucket === 'hour' ? 3_600_000 : 86_400_000
+  const rowByBucket = new Map<number, Record<string, number | string>>()
+  for (const row of rows) {
+    rowByBucket.set(Number(row.sortKey), row)
+  }
+  const totalKeys = ['inputTokens', 'outputTokens', 'cacheReadTokens', 'cacheCreationTokens']
+  const zeroKeys = seriesKeys ?? totalKeys
+  const filled: Record<string, number | string>[] = []
+  for (
+    let bucketStart = Math.floor(from / bucketSize) * bucketSize;
+    bucketStart <= to;
+    bucketStart += bucketSize
+  ) {
+    const existing = rowByBucket.get(bucketStart)
+    if (existing) {
+      filled.push(existing)
+      continue
+    }
+    const gapRow: Record<string, number | string> = {
+      sortKey: bucketStart,
+      label: formatBucketLabel(bucketStart, bucket),
+    }
+    for (const key of zeroKeys) {
+      gapRow[key] = 0
+    }
+    filled.push(gapRow)
+  }
+  return filled
+}
+
+function formatBucketLabel(bucketStart: number, bucket: 'hour' | 'day'): string {
+  return bucket === 'hour'
+    ? new Date(bucketStart).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })
+    : new Date(bucketStart).toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' })
 }
