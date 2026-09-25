@@ -2,24 +2,28 @@ import { useEffect, useMemo, useState } from 'react'
 import {
   api,
   type ClientKey,
+  type GroupedTimelinePoint,
   type GroupedUsage,
   type ProviderLimitUsage,
   type ProxyConfig,
   type RangeSummary,
   type TimelinePoint,
+  type WindowBoundary,
   type WindowSummary,
 } from '../api/client'
+import PeriodNavigator, { type PeriodRange } from '../components/PeriodNavigator'
 import PeriodCard from '../components/PeriodCard'
 import ProviderLimitBars from '../components/ProviderLimitBars'
-import TimelineChart from '../components/TimelineChart'
+import TimelineChart, { TOTAL_SERIES, pivotGroupedTimeline } from '../components/TimelineChart'
 import UsageTable from '../components/UsageTable'
 import WindowCard from '../components/WindowCard'
 import WindowHistoryTable from '../components/WindowHistoryTable'
 
-/** Сентинел «Все ключи» в селекторе (пустая строка). */
-const ALL_KEYS_VALUE = ''
+/** Срез таймлайна. */
+type SliceMode = 'total' | 'model' | 'provider'
 
-// Главный экран: окно 5ч, периоды, таймлайн, таблицы, история окон.
+const DAY = 86_400_000
+
 export default function DashboardPage({ refreshTick }: { refreshTick: number }) {
   const [clientKeys, setClientKeys] = useState<ClientKey[]>([])
   const [selectedKey, setSelectedKey] = useState<string | null>(null)
@@ -27,12 +31,37 @@ export default function DashboardPage({ refreshTick }: { refreshTick: number }) 
   const [providerLimits, setProviderLimits] = useState<ProviderLimitUsage[]>([])
   const [clientWindow, setClientWindow] = useState<WindowSummary | null>(null)
   const [summaries, setSummaries] = useState<RangeSummary[]>([])
-  const [byModelRows, setByModelRows] = useState<GroupedUsage[]>([])
-  const [byProviderRows, setByProviderRows] = useState<GroupedUsage[]>([])
+  const [byModelRowsWeek, setByModelRowsWeek] = useState<GroupedUsage[]>([])
+  const [byModelRowsMonth, setByModelRowsMonth] = useState<GroupedUsage[]>([])
+  const [byProviderRowsWeek, setByProviderRowsWeek] = useState<GroupedUsage[]>([])
+  const [byProviderRowsMonth, setByProviderRowsMonth] = useState<GroupedUsage[]>([])
   const [windows, setWindows] = useState<WindowSummary[]>([])
-  const [timelineBucket, setTimelineBucket] = useState<'hour' | 'day'>('hour')
-  const [timelinePoints, setTimelinePoints] = useState<TimelinePoint[]>([])
+  const [windowModels, setWindowModels] = useState<GroupedUsage[]>([])
+  const [windowProviders, setWindowProviders] = useState<GroupedUsage[]>([])
+
+  // навигация по периодам
+  const [selectedPreset, setSelectedPreset] = useState('last7days')
+  const [periodRange, setPeriodRange] = useState<PeriodRange>(() => ({
+    fromMilliseconds: Date.now() - 7 * DAY,
+    toMilliseconds: Date.now(),
+  }))
+  const [customRange, setCustomRange] = useState<PeriodRange>(() => ({
+    fromMilliseconds: dayStart(1),
+    toMilliseconds: Date.now(),
+  }))
+  const [sliceMode, setSliceMode] = useState<SliceMode>('total')
+
+  const [timelineRows, setTimelineRows] = useState<Record<string, number | string>[]>([])
+  const [timelineLabels, setTimelineLabels] = useState<
+    { key: string; label: string; color: string }[]
+  >([])
+  const [boundaries, setBoundaries] = useState<WindowBoundary[]>([])
   const [error, setError] = useState<string | null>(null)
+
+  const keyParameter = selectedKey !== null && selectedKey.length > 0 ? selectedKey : null
+  const windowHours = useMemo(() => proxyConfig?.windowHours ?? 5, [proxyConfig])
+  const bucket: 'hour' | 'day' =
+    periodRange.toMilliseconds - periodRange.fromMilliseconds <= 2 * DAY ? 'hour' : 'day'
 
   useEffect(() => {
     api
@@ -40,15 +69,13 @@ export default function DashboardPage({ refreshTick }: { refreshTick: number }) 
       .then((keys) => {
         const activeKeys = keys.filter((key) => key.revokedAt === null)
         setClientKeys(activeKeys)
-        // по умолчанию — самый активный ключ (не свежесозданный без трафика);
-        // уже сделанный пользователем выбор не перекрываем
         setSelectedKey((current) => {
           if (current !== null) return current
           const mostActive = [...activeKeys].sort(
             (first, second) =>
               (second.lastUsedAt ?? second.createdAt) - (first.lastUsedAt ?? first.createdAt),
           )[0]
-          return mostActive?.name ?? ALL_KEYS_VALUE
+          return mostActive?.name ?? ''
         })
       })
       .catch((loadError: Error) => setError(loadError.message))
@@ -62,47 +89,116 @@ export default function DashboardPage({ refreshTick }: { refreshTick: number }) 
       .catch(() => setProviderLimits([]))
   }, [refreshTick])
 
+  // сводки и окна выбранного ключа
   useEffect(() => {
-    if (selectedKey === null) return // ключи ещё не загрузились
-    const keyParameter = selectedKey.length > 0 ? selectedKey : null
+    if (selectedKey === null) return
     const summariesRequest = Promise.all([
       api.summary('today', keyParameter),
       api.summary('7d', keyParameter),
       api.summary('30d', keyParameter),
-      api.byModel('7d', keyParameter),
-      api.byProvider('7d', keyParameter),
     ])
-    // окно — атрибут конкретного ключа; для «Все ключи» не показываем
+    const tablesRequest = Promise.all([
+      api.byModel('7d', keyParameter),
+      api.byModel('30d', keyParameter),
+      api.byProvider('7d', keyParameter),
+      api.byProvider('30d', keyParameter),
+    ])
     const windowsRequest: Promise<[WindowSummary | null, WindowSummary[]]> = keyParameter
       ? Promise.all([api.currentWindow(keyParameter), api.windowHistory(keyParameter)])
       : Promise.resolve([null, []])
-    Promise.all([summariesRequest, windowsRequest])
+    Promise.all([summariesRequest, tablesRequest, windowsRequest])
       .then(
         ([
-          [todaySummary, weekSummary, monthSummary, models, providers],
+          [todaySummary, weekSummary, monthSummary],
+          [modelsWeek, modelsMonth, providersWeek, providersMonth],
           [currentWindow, windowHistory],
         ]) => {
-          setClientWindow(currentWindow)
           setSummaries([todaySummary, weekSummary, monthSummary])
-          setByModelRows(models)
-          setByProviderRows(providers)
+          setByModelRowsWeek(modelsWeek)
+          setByModelRowsMonth(modelsMonth)
+          setByProviderRowsWeek(providersWeek)
+          setByProviderRowsMonth(providersMonth)
+          setClientWindow(currentWindow)
           setWindows(windowHistory)
           setError(null)
         },
       )
       .catch((loadError: Error) => setError(loadError.message))
+
+    // срез внутри текущего окна ключа: по моделям и провайдерам
+    if (keyParameter) {
+      api
+        .currentWindow(keyParameter)
+        .then((currentWindow) => {
+          if (!currentWindow) {
+            setWindowModels([])
+            setWindowProviders([])
+            return
+          }
+          const now = Date.now()
+          return Promise.all([
+            api.byModelRange(keyParameter, currentWindow.startedAtMilliseconds, now),
+            api.byProviderRange(keyParameter, currentWindow.startedAtMilliseconds, now),
+          ]).then(([models, providers]) => {
+            setWindowModels(models)
+            setWindowProviders(providers)
+          })
+        })
+        .catch(() => {
+          setWindowModels([])
+          setWindowProviders([])
+        })
+    }
   }, [refreshTick, selectedKey])
 
+  // таймлайн выбранного периода/среза + границы окон
   useEffect(() => {
-    if (selectedKey === null) return // ключи ещё не загрузились
-    api
-      .timeline(timelineBucket, selectedKey.length > 0 ? selectedKey : null)
-      .then(setTimelinePoints)
-      .catch((loadError: Error) => setError(loadError.message))
-  }, [refreshTick, timelineBucket, selectedKey])
+    const from = periodRange.fromMilliseconds
+    const to = periodRange.toMilliseconds
+    const timelineRequest =
+      sliceMode === 'total'
+        ? api
+            .timelineRange(bucket, keyParameter, from, to)
+            .then((points: TimelinePoint[]) => {
+              setTimelineRows(
+                points.map((point) => ({
+                  sortKey: point.bucketStartMilliseconds,
+                  label:
+                    bucket === 'hour'
+                      ? new Date(point.bucketStartMilliseconds).toLocaleTimeString('ru-RU', {
+                          hour: '2-digit',
+                          minute: '2-digit',
+                        })
+                      : new Date(point.bucketStartMilliseconds).toLocaleDateString('ru-RU', {
+                          day: '2-digit',
+                          month: '2-digit',
+                        }),
+                  inputTokens: point.inputTokens,
+                  outputTokens: point.outputTokens,
+                  cacheReadTokens: point.cacheReadTokens,
+                  cacheCreationTokens: point.cacheCreationTokens,
+                })),
+              )
+              setTimelineLabels(TOTAL_SERIES.map((series) => ({ ...series })))
+            })
+        : api
+            .groupedTimeline(bucket, keyParameter, from, to, sliceMode)
+            .then((points: GroupedTimelinePoint[]) => {
+              const pivoted = pivotGroupedTimeline(points, bucket)
+              setTimelineRows(pivoted.data)
+              setTimelineLabels(pivoted.labels)
+            })
+    timelineRequest.catch((loadError: Error) => setError(loadError.message))
 
-  const windowHours = useMemo(() => proxyConfig?.windowHours ?? 5, [proxyConfig])
-  const keyParameter = selectedKey !== null && selectedKey.length > 0 ? selectedKey : null
+    if (bucket === 'hour' && keyParameter) {
+      api
+        .windowBoundaries(keyParameter, from, to)
+        .then(setBoundaries)
+        .catch(() => setBoundaries([]))
+    } else {
+      setBoundaries([])
+    }
+  }, [refreshTick, periodRange, bucket, sliceMode, selectedKey])
 
   return (
     <div className="dashboard">
@@ -111,10 +207,10 @@ export default function DashboardPage({ refreshTick }: { refreshTick: number }) 
         <label>
           Клиентский ключ:{' '}
           <select
-            value={selectedKey ?? ALL_KEYS_VALUE}
+            value={selectedKey ?? ''}
             onChange={(event) => setSelectedKey(event.target.value)}
           >
-            <option value={ALL_KEYS_VALUE}>Все ключи (сводно)</option>
+            <option value="">Все ключи (сводно)</option>
             {clientKeys.map((key) => (
               <option key={key.id} value={key.name}>
                 {key.name}
@@ -124,41 +220,70 @@ export default function DashboardPage({ refreshTick }: { refreshTick: number }) 
           </select>
         </label>
       </div>
+      <WindowCard
+        clientWindow={clientWindow}
+        windowHours={windowHours}
+        windowModels={windowModels}
+        windowProviders={windowProviders}
+        providerLimits={providerLimits}
+      />
       <div className="cards-row">
-        {keyParameter ? (
-          <WindowCard clientWindow={clientWindow} windowHours={windowHours} />
-        ) : (
-          <section className="card window-card">
-            <h2>Текущее окно {windowHours} ч</h2>
-            <p className="muted">
-              Окно считается на каждый ключ отдельно — выберите ключ, чтобы увидеть его окно.
-            </p>
-          </section>
-        )}
         {summaries.map((summary) => (
           <PeriodCard key={summary.range} summary={summary} />
         ))}
       </div>
+      <PeriodNavigator
+        selectedPreset={selectedPreset}
+        onSelectPreset={(presetId, range) => {
+          setSelectedPreset(presetId)
+          setPeriodRange(range)
+        }}
+        customRange={customRange}
+        onCustomRange={(range) => {
+          setCustomRange(range)
+          setSelectedPreset('custom')
+          setPeriodRange(range)
+        }}
+      />
       <div className="chart-controls">
         <div className="segmented">
-          <button
-            className={timelineBucket === 'hour' ? 'segment segment-active' : 'segment'}
-            onClick={() => setTimelineBucket('hour')}
-          >
-            7 дней по часам
-          </button>
-          <button
-            className={timelineBucket === 'day' ? 'segment segment-active' : 'segment'}
-            onClick={() => setTimelineBucket('day')}
-          >
-            30 дней по дням
-          </button>
+          {(
+            [
+              ['total', 'Общее'],
+              ['model', 'По моделям'],
+              ['provider', 'По провайдерам'],
+            ] as [SliceMode, string][]
+          ).map(([mode, title]) => (
+            <button
+              key={mode}
+              className={sliceMode === mode ? 'segment segment-active' : 'segment'}
+              onClick={() => setSliceMode(mode)}
+            >
+              {title}
+            </button>
+          ))}
         </div>
+        <span className="muted">гранулярность: {bucket === 'hour' ? 'часы' : 'дни'} (авто)</span>
       </div>
-      <TimelineChart points={timelinePoints} bucket={timelineBucket} />
+      <TimelineChart
+        data={timelineRows}
+        labels={timelineLabels}
+        bucket={bucket}
+        boundaries={boundaries}
+      />
       <div className="tables-row">
-        <UsageTable title="По моделям (7 дней)" rows={byModelRows} labelTitle="Модель" />
-        <UsageTable title="По провайдерам (7 дней)" rows={byProviderRows} labelTitle="Провайдер" />
+        <UsageTable
+          title="По моделям"
+          rowsWeek={byModelRowsWeek}
+          rowsMonth={byModelRowsMonth}
+          labelTitle="Модель"
+        />
+        <UsageTable
+          title="По провайдерам"
+          rowsWeek={byProviderRowsWeek}
+          rowsMonth={byProviderRowsMonth}
+          labelTitle="Провайдер"
+        />
       </div>
       {providerLimits.length > 0 && (
         <section className="card dashboard-limits">
@@ -169,7 +294,7 @@ export default function DashboardPage({ refreshTick }: { refreshTick: number }) 
           {providerLimits.map((limitUsage) => (
             <div key={limitUsage.providerName} className="dashboard-limit-provider">
               <h3>{limitUsage.providerName}</h3>
-              <ProviderLimitBars usage={limitUsage} />
+              <ProviderLimitBars key={limitUsage.providerName} usage={limitUsage} />
             </div>
           ))}
         </section>
@@ -177,4 +302,10 @@ export default function DashboardPage({ refreshTick }: { refreshTick: number }) 
       {keyParameter && <WindowHistoryTable windows={windows} />}
     </div>
   )
+}
+
+function dayStart(offsetDays: number): number {
+  const date = new Date()
+  date.setHours(0, 0, 0, 0)
+  return date.getTime() - offsetDays * DAY
 }

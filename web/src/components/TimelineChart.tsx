@@ -2,17 +2,34 @@ import {
   Area,
   AreaChart,
   CartesianGrid,
+  ReferenceLine,
   ResponsiveContainer,
   Tooltip,
   XAxis,
   YAxis,
 } from 'recharts'
-import type { TimelinePoint } from '../api/client'
+import type {
+  GroupedTimelinePoint,
+  TimelinePoint,
+  WindowBoundary,
+} from '../api/client'
 import { formatDay, formatTime, formatTokens } from '../format'
 
-// Палитра (тёмная тема, валидирована: CVD ΔE 8.4, контраст ≥ 3:1).
-// Цвет закреплён за серией, порядок фиксированный.
-const SERIES = [
+// Палитра срез-серий (тёмная тема; первые 4 — из валидированной категорийной,
+// далее — дополнительные оттенки, «прочее» — серый).
+const GROUPED_COLORS = [
+  '#3987e5',
+  '#d95926',
+  '#199e70',
+  '#c98500',
+  '#d55181',
+  '#9085e9',
+  '#e66767',
+  '#898781',
+]
+
+// Серии общего графика: цвет закреплён за серией, фиксированный порядок.
+const TOTAL_SERIES = [
   { key: 'inputTokens', label: 'Вход', color: '#3987e5' },
   { key: 'outputTokens', label: 'Выход', color: '#d95926' },
   { key: 'cacheReadTokens', label: 'Кэш-чтение', color: '#199e70' },
@@ -46,81 +63,158 @@ function ChartTooltip({
         <div key={entry.name} className="chart-tooltip-row">
           <span className="chart-tooltip-swatch" style={{ background: entry.color }} />
           <span>{entry.name}</span>
-          <span className="chart-tooltip-value">
-            {formatTokens(Number(entry.value ?? 0))}
-          </span>
+          <span className="chart-tooltip-value">{formatTokens(Number(entry.value ?? 0))}</span>
         </div>
       ))}
     </div>
   )
 }
 
-// Stacked-area таймлайн расхода токенов по часам/дням.
+export interface TimelineChartData {
+  total: TimelinePoint[]
+  grouped: GroupedTimelinePoint[]
+  labels: string[]
+}
+
+// Таймлайн расхода: общий (стек вход/выход/кэш) или срез по моделям/провайдерам;
+// на дневном (часовом) виде — вертикальные границы 5-часовых окон ключа.
 export default function TimelineChart({
-  points,
+  data,
+  labels,
   bucket,
+  boundaries,
 }: {
-  points: TimelinePoint[]
+  data: Record<string, number | string>[]
+  labels: { key: string; label: string; color: string }[]
   bucket: 'hour' | 'day'
+  boundaries: WindowBoundary[]
 }) {
-  const data = points.map((point) => ({
-    ...point,
-    label:
-      bucket === 'hour'
-        ? formatTime(point.bucketStartMilliseconds)
-        : formatDay(point.bucketStartMilliseconds),
-  }))
+  if (data.length === 0) {
+    return (
+      <section className="card chart-card">
+        <h2>Расход по времени</h2>
+        <p className="muted">Нет данных за выбранный период.</p>
+      </section>
+    )
+  }
   return (
     <section className="card chart-card">
-      <h2>Расход по времени</h2>
-      {data.length === 0 ? (
-        <p className="muted">Пока нет данных за период.</p>
-      ) : (
-        <div className="chart-container">
-          <div className="chart-legend" aria-hidden="true">
-            {SERIES.map((series) => (
-              <span key={series.key} className="chart-legend-item">
-                <span className="chart-legend-swatch" style={{ background: series.color }} />
-                {series.label}
-              </span>
-            ))}
-          </div>
-          <ResponsiveContainer width="100%" height={280}>
-            <AreaChart data={data} margin={{ top: 8, right: 8, bottom: 0, left: 8 }}>
-              <CartesianGrid stroke={GRIDLINE} vertical={false} />
-              <XAxis
-                dataKey="label"
-                tick={{ fill: MUTED_INK, fontSize: 12 }}
-                axisLine={{ stroke: GRIDLINE }}
-                tickLine={false}
-                minTickGap={48}
-              />
-              <YAxis
-                tick={{ fill: MUTED_INK, fontSize: 12 }}
-                axisLine={false}
-                tickLine={false}
-                width={64}
-                tickFormatter={(value: number) => formatTokens(value)}
-              />
-              <Tooltip content={<ChartTooltip />} />
-              {SERIES.map((series) => (
-                <Area
-                  key={series.key}
-                  type="monotone"
-                  dataKey={series.key}
-                  name={series.label}
-                  stackId="tokens"
-                  stroke={SURFACE}
-                  strokeWidth={2}
-                  fill={series.color}
-                  fillOpacity={0.85}
-                  isAnimationActive={false}
+      <h2>
+        Расход по времени
+        {bucket === 'hour' && boundaries.length > 0 && (
+          <span className="card-note">серые линии — старт 5-часовых окон ключа</span>
+        )}
+      </h2>
+      <div className="chart-container">
+        <div className="chart-legend" aria-hidden="true">
+          {labels.map((series) => (
+            <span key={series.key} className="chart-legend-item">
+              <span className="chart-legend-swatch" style={{ background: series.color }} />
+              {series.label}
+            </span>
+          ))}
+        </div>
+        <ResponsiveContainer width="100%" height={280}>
+          <AreaChart data={data} margin={{ top: 8, right: 8, bottom: 0, left: 8 }}>
+            <CartesianGrid stroke={GRIDLINE} vertical={false} />
+            <XAxis
+              dataKey="label"
+              tick={{ fill: MUTED_INK, fontSize: 12 }}
+              axisLine={{ stroke: GRIDLINE }}
+              tickLine={false}
+              minTickGap={48}
+            />
+            <YAxis
+              tick={{ fill: MUTED_INK, fontSize: 12 }}
+              axisLine={false}
+              tickLine={false}
+              width={64}
+              tickFormatter={(value: number) => formatTokens(value)}
+            />
+            <Tooltip content={<ChartTooltip />} />
+            {bucket === 'hour' &&
+              boundaries.map((boundary) => (
+                <ReferenceLine
+                  key={boundary.startedAtMilliseconds}
+                  x={
+                    bucket === 'hour'
+                      ? formatTime(boundary.startedAtMilliseconds)
+                      : formatDay(boundary.startedAtMilliseconds)
+                  }
+                  stroke="#898781"
+                  strokeDasharray="4 4"
+                  strokeWidth={1}
                 />
               ))}
-            </AreaChart>
-          </ResponsiveContainer>
-        </div>
-      )}
+            {labels.map((series) => (
+              <Area
+                key={series.key}
+                type="monotone"
+                dataKey={series.key}
+                name={series.label}
+                stackId="tokens"
+                stroke={SURFACE}
+                strokeWidth={2}
+                fill={series.color}
+                fillOpacity={0.85}
+                isAnimationActive={false}
+              />
+            ))}
+          </AreaChart>
+        </ResponsiveContainer>
+      </div>
     </section>
   )
 }
+
+/** Пивот срез-точек в wide-формат для Recharts + список серий с цветами. */
+export function pivotGroupedTimeline(
+  grouped: GroupedTimelinePoint[],
+  bucket: 'hour' | 'day',
+): { data: Record<string, number | string>[]; labels: { key: string; label: string; color: string }[] } {
+  const totalsByName = new Map<string, number>()
+  for (const point of grouped) {
+    totalsByName.set(point.label, (totalsByName.get(point.label) ?? 0) + point.tokens)
+  }
+  const orderedLabels = [...totalsByName.entries()]
+    .sort((first, second) => second[1] - first[1])
+    .map(([name]) => name)
+  // «прочее» всегда последним и серым
+  const otherIndex = orderedLabels.indexOf('прочее')
+  if (otherIndex >= 0) {
+    orderedLabels.splice(otherIndex, 1)
+    orderedLabels.push('прочее')
+  }
+  const colorOf = (label: string, index: number) =>
+    label === 'прочее' ? '#898781' : GROUPED_COLORS[index % GROUPED_COLORS.length]
+  const series = orderedLabels.map((label, index) => ({
+    key: label,
+    label,
+    color: colorOf(label, index),
+  }))
+  const byBucket = new Map<number, Record<string, number | string>>()
+  for (const point of grouped) {
+    const row =
+      byBucket.get(point.bucketStartMilliseconds) ??
+      (() => {
+        const created: Record<string, number | string> = {
+          bucketStartMilliseconds: point.bucketStartMilliseconds,
+          sortKey: point.bucketStartMilliseconds,
+          label:
+            bucket === 'hour'
+              ? formatTime(point.bucketStartMilliseconds)
+              : formatDay(point.bucketStartMilliseconds),
+        }
+        for (const name of orderedLabels) created[name] = 0
+        byBucket.set(point.bucketStartMilliseconds, created)
+        return created
+      })()
+    row[point.label] = point.tokens
+  }
+  const data = [...byBucket.values()].sort(
+    (first, second) => Number(first.sortKey) - Number(second.sortKey),
+  )
+  return { data, labels: series }
+}
+
+export { TOTAL_SERIES }

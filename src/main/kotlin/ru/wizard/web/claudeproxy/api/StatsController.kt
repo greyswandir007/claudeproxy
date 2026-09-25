@@ -29,13 +29,19 @@ class StatsController(
     suspend fun byModel(
         @RequestParam(defaultValue = "7d") range: String,
         @RequestParam(name = "key", required = false) clientKey: String?,
-    ): List<StatsService.GroupedUsage> = statsService.byModel(range, clientKey)
+        @RequestParam(name = "from", required = false) fromMilliseconds: Long?,
+        @RequestParam(name = "to", required = false) toMilliseconds: Long?,
+    ): List<StatsService.GroupedUsage> =
+        statsService.byModel(range, clientKey, fromMilliseconds, toMilliseconds)
 
     @GetMapping("/api/by-provider")
     suspend fun byProvider(
         @RequestParam(defaultValue = "7d") range: String,
         @RequestParam(name = "key", required = false) clientKey: String?,
-    ): List<StatsService.GroupedUsage> = statsService.byProvider(range, clientKey)
+        @RequestParam(name = "from", required = false) fromMilliseconds: Long?,
+        @RequestParam(name = "to", required = false) toMilliseconds: Long?,
+    ): List<StatsService.GroupedUsage> =
+        statsService.byProvider(range, clientKey, fromMilliseconds, toMilliseconds)
 
     @GetMapping("/api/by-key")
     suspend fun byClientKey(
@@ -64,8 +70,22 @@ class StatsController(
         @RequestParam(name = "from", required = false) fromMilliseconds: Long?,
         @RequestParam(name = "to", required = false) toMilliseconds: Long?,
         @RequestParam(name = "key", required = false) clientKey: String?,
-    ): List<StatsService.TimelinePoint> =
-        statsService.timeline(bucket, fromMilliseconds, toMilliseconds, clientKey)
+        @RequestParam(defaultValue = "total") group: String,
+    ): Any =
+        if (group == "total") {
+            statsService.timeline(bucket, fromMilliseconds, toMilliseconds, clientKey)
+        } else {
+            statsService.groupedTimeline(bucket, fromMilliseconds, toMilliseconds, clientKey, group)
+        }
+
+    /** Границы 5-часовых окон ключа в диапазоне — отметки на графике дня. */
+    @GetMapping("/api/window-boundaries")
+    suspend fun windowBoundaries(
+        @RequestParam(name = "key") clientKey: String,
+        @RequestParam(name = "from") fromMilliseconds: Long,
+        @RequestParam(name = "to") toMilliseconds: Long,
+    ): List<StatsService.WindowBoundary> =
+        statsService.windowBoundaries(clientKey, fromMilliseconds, toMilliseconds)
 
     /** Выработка информационных лимитов провайдеров (заданные категории). */
     @GetMapping("/api/provider-limits")

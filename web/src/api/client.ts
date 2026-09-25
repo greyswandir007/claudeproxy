@@ -164,6 +164,18 @@ export interface LimitPeriodUsage {
   derived: boolean
 }
 
+export interface GroupedTimelinePoint {
+  bucketStartMilliseconds: number
+  label: string
+  tokens: number
+  requests: number
+}
+
+export interface WindowBoundary {
+  startedAtMilliseconds: number
+  endsAtMilliseconds: number
+}
+
 export interface ProviderLimitUsage {
   providerName: string
   window: LimitPeriodUsage | null
@@ -184,10 +196,18 @@ export interface ModelRequest {
 export const api = {
   summary: (range: string, key: string | null) =>
     getJson<RangeSummary>(`/api/summary?range=${range}${key ? `&key=${encodeURIComponent(key)}` : ''}`),
-  byModel: (range: string, key: string | null) =>
-    getJson<GroupedUsage[]>(`/api/by-model?range=${range}${key ? `&key=${encodeURIComponent(key)}` : ''}`),
-  byProvider: (range: string, key: string | null) =>
-    getJson<GroupedUsage[]>(`/api/by-provider?range=${range}${key ? `&key=${encodeURIComponent(key)}` : ''}`),
+  byModel: (range: string, key: string | null, from?: number, to?: number) =>
+    getJson<GroupedUsage[]>(
+      `/api/by-model?range=${range}` +
+        `${from !== undefined && to !== undefined ? `&from=${from}&to=${to}` : ''}` +
+        `${key ? `&key=${encodeURIComponent(key)}` : ''}`,
+    ),
+  byProvider: (range: string, key: string | null, from?: number, to?: number) =>
+    getJson<GroupedUsage[]>(
+      `/api/by-provider?range=${range}` +
+        `${from !== undefined && to !== undefined ? `&from=${from}&to=${to}` : ''}` +
+        `${key ? `&key=${encodeURIComponent(key)}` : ''}`,
+    ),
   currentWindow: (key: string) =>
     getJson<WindowSummary | null>(`/api/window?key=${encodeURIComponent(key)}`),
   windowHistory: (key: string, limit = 20) =>
@@ -195,6 +215,34 @@ export const api = {
   timeline: (bucket: 'hour' | 'day', key: string | null) =>
     getJson<TimelinePoint[]>(
       `/api/timeline?bucket=${bucket}${key ? `&key=${encodeURIComponent(key)}` : ''}`,
+    ),
+  timelineRange: (bucket: 'hour' | 'day', key: string | null, from: number, to: number) =>
+    getJson<TimelinePoint[]>(
+      `/api/timeline?bucket=${bucket}&from=${from}&to=${to}` +
+        `${key ? `&key=${encodeURIComponent(key)}` : ''}`,
+    ),
+  groupedTimeline: (
+    bucket: 'hour' | 'day',
+    key: string | null,
+    from: number,
+    to: number,
+    group: 'model' | 'provider',
+  ) =>
+    getJson<GroupedTimelinePoint[]>(
+      `/api/timeline?bucket=${bucket}&from=${from}&to=${to}&group=${group}` +
+        `${key ? `&key=${encodeURIComponent(key)}` : ''}`,
+    ),
+  windowBoundaries: (key: string, from: number, to: number) =>
+    getJson<WindowBoundary[]>(
+      `/api/window-boundaries?key=${encodeURIComponent(key)}&from=${from}&to=${to}`,
+    ),
+  byModelRange: (key: string | null, from: number, to: number) =>
+    getJson<GroupedUsage[]>(
+      `/api/by-model?from=${from}&to=${to}${key ? `&key=${encodeURIComponent(key)}` : ''}`,
+    ),
+  byProviderRange: (key: string | null, from: number, to: number) =>
+    getJson<GroupedUsage[]>(
+      `/api/by-provider?from=${from}&to=${to}${key ? `&key=${encodeURIComponent(key)}` : ''}`,
     ),
   config: () => getJson<ProxyConfig>('/api/config'),
   keys: () => getJson<ClientKey[]>('/api/keys'),

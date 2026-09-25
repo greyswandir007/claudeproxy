@@ -31,16 +31,39 @@ class JdbcStatsService(
             )
         }
 
-    override suspend fun byModel(range: String, clientKey: String?): List<StatsService.GroupedUsage> =
+    override suspend fun byModel(
+        range: String,
+        clientKey: String?,
+        fromMilliseconds: Long?,
+        toMilliseconds: Long?,
+    ): List<StatsService.GroupedUsage> =
         databaseProvider.execute {
-            val bounds = resolveBounds(range, clientKey)
+            val bounds = customOrDefaultBounds(range, clientKey, fromMilliseconds, toMilliseconds)
             grouped("model", bounds.first, bounds.second, clientKey)
         }
 
-    override suspend fun byProvider(range: String, clientKey: String?): List<StatsService.GroupedUsage> =
+    override suspend fun byProvider(
+        range: String,
+        clientKey: String?,
+        fromMilliseconds: Long?,
+        toMilliseconds: Long?,
+    ): List<StatsService.GroupedUsage> =
         databaseProvider.execute {
-            val bounds = resolveBounds(range, clientKey)
+            val bounds = customOrDefaultBounds(range, clientKey, fromMilliseconds, toMilliseconds)
             grouped("provider", bounds.first, bounds.second, clientKey)
+        }
+
+    /** Пресет диапазона, если не задан произвольный from/to. */
+    private fun customOrDefaultBounds(
+        range: String,
+        clientKey: String?,
+        fromMilliseconds: Long?,
+        toMilliseconds: Long?,
+    ): Pair<Long, Long> =
+        if (fromMilliseconds != null && toMilliseconds != null) {
+            fromMilliseconds to toMilliseconds
+        } else {
+            resolveBounds(range, clientKey)
         }
 
     override suspend fun byClientKey(range: String): List<StatsService.GroupedUsage> =
@@ -147,6 +170,102 @@ class JdbcStatsService(
         row.window != null -> EffectiveLimit(row.window * WINDOWS_PER_MONTH, derived = true)
         else -> null
     }
+
+    override suspend fun groupedTimeline(
+        bucket: String,
+        fromMilliseconds: Long?,
+        toMilliseconds: Long?,
+        clientKey: String?,
+        groupBy: String,
+    ): List<StatsService.GroupedTimelinePoint> =
+        databaseProvider.execute {
+            val bucketMilliseconds = when (bucket) {
+                "hour" -> 3_600_000L
+                "day" -> 86_400_000L
+                else -> throw ApiError(
+                    HttpStatus.BAD_REQUEST,
+                    "invalid_request_error",
+                    "bucket: ожидается hour или day",
+                )
+            }
+            val column = when (groupBy) {
+                "model" -> "model"
+                "provider" -> "provider"
+                else -> throw ApiError(
+                    HttpStatus.BAD_REQUEST,
+                    "invalid_request_error",
+                    "group: ожидается model или provider",
+                )
+            }
+            val to = toMilliseconds ?: System.currentTimeMillis()
+            val defaultBucketCount = if (bucket == "hour") 7 * 24 else 30
+            val from = fromMilliseconds ?: to - defaultBucketCount * bucketMilliseconds
+            val keyCondition = if (clientKey != null) " AND client_key = ?" else ""
+            val rawPoints = ArrayList<StatsService.GroupedTimelinePoint>()
+            jdbcTemplate.query(
+                """SELECT (ts / $bucketMilliseconds) * $bucketMilliseconds, $column, COUNT(*),
+                          COALESCE(SUM(input_tokens + output_tokens + cache_creation_tokens + cache_read_tokens), 0)
+                   FROM usage_event
+                   WHERE ts >= ? AND ts <= ?$keyCondition
+                   GROUP BY 1, $column
+                   ORDER BY 1, 4 DESC""",
+                { resultSet, _ ->
+                    rawPoints.add(
+                        StatsService.GroupedTimelinePoint(
+                            bucketStartMilliseconds = resultSet.getLong(1),
+                            label = resultSet.getString(2),
+                            requests = resultSet.getLong(3),
+                            tokens = resultSet.getLong(4),
+                        ),
+                    )
+                },
+                *queryArguments(from, to, clientKey),
+            )
+            collapseToTopPerBucket(rawPoints)
+        }
+
+    /** Топ-N меток на бакет, остальное — в «прочее». */
+    private fun collapseToTopPerBucket(rawPoints: List<StatsService.GroupedTimelinePoint>): List<StatsService.GroupedTimelinePoint> {
+        val result = ArrayList<StatsService.GroupedTimelinePoint>()
+        rawPoints.groupBy { it.bucketStartMilliseconds }.toSortedMap().forEach { (bucketStart, bucketPoints) ->
+            val sorted = bucketPoints.sortedByDescending { it.tokens }
+            result.addAll(sorted.take(GROUPED_TIMELINE_TOP))
+            val otherPoints = sorted.drop(GROUPED_TIMELINE_TOP)
+            if (otherPoints.isNotEmpty()) {
+                result.add(
+                    StatsService.GroupedTimelinePoint(
+                        bucketStartMilliseconds = bucketStart,
+                        label = OTHER_LABEL,
+                        tokens = otherPoints.sumOf { it.tokens },
+                        requests = otherPoints.sumOf { it.requests },
+                    ),
+                )
+            }
+        }
+        return result
+    }
+
+    override suspend fun windowBoundaries(
+        clientKey: String,
+        fromMilliseconds: Long,
+        toMilliseconds: Long,
+    ): List<StatsService.WindowBoundary> =
+        databaseProvider.execute {
+            jdbcTemplate.query(
+                """SELECT started_at, ends_at FROM usage_window
+                   WHERE client_key = ? AND started_at <= ? AND ends_at >= ?
+                   ORDER BY started_at""",
+                { resultSet, _ ->
+                    StatsService.WindowBoundary(
+                        startedAtMilliseconds = resultSet.getLong(1),
+                        endsAtMilliseconds = resultSet.getLong(2),
+                    )
+                },
+                clientKey,
+                toMilliseconds,
+                fromMilliseconds,
+            )
+        }
 
     override suspend fun providerLimitUsage(): List<StatsService.ProviderLimitUsage> =
         databaseProvider.execute { providerLimitUsageBlocking() }
@@ -386,5 +505,8 @@ class JdbcStatsService(
         const val WINDOWS_PER_WEEK = 33.6
         const val WINDOWS_PER_MONTH = 144L
         const val WEEKS_PER_MONTH = 4.29
+
+        const val GROUPED_TIMELINE_TOP = 7
+        const val OTHER_LABEL = "прочее"
     }
 }

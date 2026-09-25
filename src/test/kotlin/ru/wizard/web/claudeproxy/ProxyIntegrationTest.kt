@@ -324,6 +324,30 @@ class ProxyIntegrationTest {
             .expectBody()
             .jsonPath("$[0].requests").isEqualTo(1)
 
+        // срез таймлайна по моделям и кастомный диапазон в срезах
+        webTestClient.get().uri("/api/timeline?bucket=hour&group=model")
+            .exchange().expectStatus().isOk
+            .expectBody()
+            .jsonPath("$[0].label").isEqualTo("fake-model")
+            .jsonPath("$[0].tokens").isEqualTo(35)
+        webTestClient.get().uri("/api/timeline?bucket=hour&group=provider")
+            .exchange().expectStatus().isOk
+            .expectBody()
+            .jsonPath("$[0].label").isEqualTo("fake")
+        val from = System.currentTimeMillis() - 3_600_000
+        val to = System.currentTimeMillis() + 3_600_000
+        webTestClient.get().uri("/api/by-model?from=$from&to=$to")
+            .exchange().expectStatus().isOk
+            .expectBody()
+            .jsonPath("$[0].label").isEqualTo("fake-model")
+
+        // границы 5-часовых окон ключа для графика дня
+        webTestClient.get().uri("/api/window-boundaries?key=test&from=$from&to=$to")
+            .exchange().expectStatus().isOk
+            .expectBody()
+            .jsonPath("$[0].startedAtMilliseconds").isNumber
+            .jsonPath("$[0].endsAtMilliseconds").isNumber
+
         // таймлайн фильтруется по ключу: другой ключ — пусто
         val createdKey = webTestClient.post().uri("/api/keys")
             .contentType(MediaType.APPLICATION_JSON)

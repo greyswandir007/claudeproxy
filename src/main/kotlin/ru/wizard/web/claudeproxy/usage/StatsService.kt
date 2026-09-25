@@ -51,9 +51,10 @@ interface StatsService {
      */
     suspend fun summary(range: String, clientKey: String?): RangeSummary
 
-    suspend fun byModel(range: String, clientKey: String?): List<GroupedUsage>
+    /** range — пресет; при заданных from/to используется произвольный диапазон. */
+    suspend fun byModel(range: String, clientKey: String?, fromMilliseconds: Long?, toMilliseconds: Long?): List<GroupedUsage>
 
-    suspend fun byProvider(range: String, clientKey: String?): List<GroupedUsage>
+    suspend fun byProvider(range: String, clientKey: String?, fromMilliseconds: Long?, toMilliseconds: Long?): List<GroupedUsage>
 
     suspend fun byClientKey(range: String): List<GroupedUsage>
 
@@ -66,6 +67,35 @@ interface StatsService {
         toMilliseconds: Long?,
         clientKey: String?,
     ): List<TimelinePoint>
+
+    /** Точка срез-таймлайна: токены сущности (модель/провайдер) в бакете. */
+    data class GroupedTimelinePoint(
+        val bucketStartMilliseconds: Long,
+        val label: String,
+        val tokens: Long,
+        val requests: Long,
+    )
+
+    /** Срез таймлайна по моделям или провайдерам: топ-N + «прочее» на бакет. */
+    suspend fun groupedTimeline(
+        bucket: String,
+        fromMilliseconds: Long?,
+        toMilliseconds: Long?,
+        clientKey: String?,
+        groupBy: String,
+    ): List<GroupedTimelinePoint>
+
+    data class WindowBoundary(
+        val startedAtMilliseconds: Long,
+        val endsAtMilliseconds: Long,
+    )
+
+    /** 5-часовые окна ключа, пересекающие диапазон (для отметок на графике дня). */
+    suspend fun windowBoundaries(
+        clientKey: String,
+        fromMilliseconds: Long,
+        toMilliseconds: Long,
+    ): List<WindowBoundary>
 
     /** Выработка информационных лимитов провайдеров (только заданные категории). */
     data class ModelTokens(val modelName: String, val tokens: Long)
