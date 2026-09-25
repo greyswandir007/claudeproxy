@@ -5,6 +5,7 @@ import {
   type FallbackReport,
   type GroupedTimelinePoint,
   type GroupedUsage,
+  type ProviderCost,
   type ProviderLimitUsage,
   type ProviderWindowSummary,
   type ProxyConfig,
@@ -16,6 +17,7 @@ import {
 } from '../api/client'
 import PeriodNavigator, { type PeriodRange } from '../components/PeriodNavigator'
 import PeriodCard from '../components/PeriodCard'
+import CostSection from '../components/CostSection'
 import ProviderLimitBars from '../components/ProviderLimitBars'
 import RoutingHealth from '../components/RoutingHealth'
 import TimelineChart, { TOTAL_SERIES, pivotGroupedTimeline } from '../components/TimelineChart'
@@ -45,6 +47,7 @@ export default function DashboardPage({ refreshTick }: { refreshTick: number }) 
   const [windowProviders, setWindowProviders] = useState<GroupedUsage[]>([])
   const [fallbackReport, setFallbackReport] = useState<FallbackReport | null>(null)
   const [routeCooldowns, setRouteCooldowns] = useState<RouteCooldown[]>([])
+  const [providerCosts, setProviderCosts] = useState<ProviderCost[]>([])
 
   // навигация по периодам
   const [selectedPreset, setSelectedPreset] = useState('last7days')
@@ -106,6 +109,10 @@ export default function DashboardPage({ refreshTick }: { refreshTick: number }) 
       .providerWindowHistory()
       .then(setProviderWindows)
       .catch(() => setProviderWindows([]))
+    api
+      .providerCosts()
+      .then(setProviderCosts)
+      .catch(() => setProviderCosts([]))
   }, [refreshTick])
 
   // сводки и окна выбранного ключа
@@ -305,6 +312,7 @@ export default function DashboardPage({ refreshTick }: { refreshTick: number }) 
         />
       </div>
       <RoutingHealth report={fallbackReport} cooldowns={routeCooldowns} />
+      <CostSection providerCosts={providerCosts} />
       {providerLimits.length > 0 && (
         <section className="card dashboard-limits">
           <h2>

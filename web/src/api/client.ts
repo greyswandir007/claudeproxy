@@ -155,6 +155,9 @@ export interface ManagedProvider {
   limitMonthTokens: number | null
   effortMapping: Record<string, string>
   settingOverrides: Record<string, string>
+  pricingMode: string
+  pricePerMillionTokens: number | null
+  priceMonthly: number | null
   authType: 'api_key' | 'oauth'
   oauthGrant: 'client_credentials' | 'refresh_token'
   oauthClientId: string
@@ -184,6 +187,20 @@ export interface ProviderRequest {
   oauthTokenUrl?: string
   oauthScopes?: string
   oauthRefreshToken?: string
+  pricingMode?: string
+  pricePerMillionTokens?: number | null
+  priceMonthly?: number | null
+}
+
+export interface ProviderCost {
+  providerName: string
+  pricingMode: string
+  pricePerMillionTokens: number | null
+  pricePerMillionDerived: boolean
+  priceMonthly: number | null
+  priceMonthlyDerived: boolean
+  spentTokens7Days: number
+  spentTokens30Days: number
 }
 
 /** Каталог оверрайдов — зеркалит ProviderSettingCatalog бэкенда. */
@@ -427,4 +444,5 @@ export const api = {
       `/api/fallback-report?range=${range}${key ? `&key=${encodeURIComponent(key)}` : ''}`,
     ),
   routeCooldowns: () => getJson<RouteCooldown[]>('/api/route-cooldowns'),
+  providerCosts: () => getJson<ProviderCost[]>('/api/provider-costs'),
 }

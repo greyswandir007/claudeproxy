@@ -139,6 +139,11 @@ class ProvidersController(
             oauthTokenUrl = node.path("oauthTokenUrl").takeIf { it.isTextual }?.asText(),
             oauthScopes = node.path("oauthScopes").takeIf { it.isTextual }?.asText(),
             oauthRefreshToken = node.path("oauthRefreshToken").takeIf { it.isTextual && it.asText().isNotEmpty() }?.asText(),
+            pricingMode = node.path("pricingMode").takeIf { it.isTextual }?.asText(),
+            pricePerMillionTokens = node.path("pricePerMillionTokens")
+                .takeIf { it.isNumber && it.asDouble() > 0 }?.asDouble(),
+            priceMonthly = node.path("priceMonthly")
+                .takeIf { it.isNumber && it.asDouble() > 0 }?.asDouble(),
         )
     }
 

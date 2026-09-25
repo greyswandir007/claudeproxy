@@ -106,6 +106,10 @@ class StatsController(
         @RequestParam(name = "key", required = false) clientKey: String?,
     ): StatsService.FallbackReport = statsService.fallbackReport(range, clientKey)
 
+    /** Тарификация провайдеров: цены (заданная + расчётная) и расход за 7/30 дней. */
+    @GetMapping("/api/provider-costs")
+    suspend fun providerCosts(): List<StatsService.ProviderCost> = statsService.providerCosts()
+
     /** Активные кулдауны провайдеров (circuit breaker). */
     @GetMapping("/api/route-cooldowns")
     fun routeCooldowns(): List<ru.wizard.web.claudeproxy.routing.RouteCircuitBreaker.CooldownState> =

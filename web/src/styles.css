@@ -1003,6 +1003,12 @@ th.numeric {
   white-space: nowrap;
 }
 
+.pricing-derived {
+  align-self: end;
+  padding-bottom: 8px;
+  font-size: 12.5px;
+}
+
 .window-provider-chip {
   display: inline-block;
   background: var(--page-plane);

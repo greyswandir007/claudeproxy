@@ -28,6 +28,12 @@ interface ProviderModelService {
         val oauthClientId: String,
         val oauthTokenUrl: String,
         val oauthScopes: String,
+        /** '' = не задано | per_million | monthly. */
+        val pricingMode: String,
+        /** $ за 1М токенов (только при pricingMode=per_million). */
+        val pricePerMillionTokens: Double?,
+        /** $ за месяц подписки (только при pricingMode=monthly). */
+        val priceMonthly: Double?,
         val models: List<ModelView>,
         val createdAt: Long,
         val updatedAt: Long,
@@ -72,6 +78,10 @@ interface ProviderModelService {
         val oauthScopes: String?,
         /** Исходный refresh-токен (grant=refresh_token); ротация пишется в БД. */
         val oauthRefreshToken: String?,
+        /** Тарификация: '' | per_million | monthly; цены XOR — ровно одна. */
+        val pricingMode: String? = null,
+        val pricePerMillionTokens: Double? = null,
+        val priceMonthly: Double? = null,
     )
 
     data class ModelRequest(

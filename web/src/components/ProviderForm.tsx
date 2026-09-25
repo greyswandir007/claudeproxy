@@ -27,6 +27,28 @@ function availableSettingKeys(settingOverrides: Record<string, string>): string[
   )
 }
 
+/** Расчётная вторая цена: per_million ↔ monthly из месячного лимита (млн → токены). */
+function derivedPriceLabel(
+  pricingMode: 'none' | 'per_million' | 'monthly',
+  pricePerMillionTokens: string,
+  priceMonthly: string,
+  monthTokensMillionsInput: string,
+): string | null {
+  const monthTokens = millionsToTokens(monthTokensMillionsInput)
+  if (monthTokens == null) return null
+  if (pricingMode === 'per_million') {
+    const price = Number(pricePerMillionTokens.replace(',', '.'))
+    if (!Number.isFinite(price) || price <= 0) return null
+    return `≈ $${(price * (monthTokens / 1_000_000)).toFixed(2)}/мес из месячного лимита`
+  }
+  if (pricingMode === 'monthly') {
+    const price = Number(priceMonthly.replace(',', '.'))
+    if (!Number.isFinite(price) || price <= 0) return null
+    return `≈ $${(price / (monthTokens / 1_000_000)).toFixed(2)}/1М токенов из месячного лимита`
+  }
+  return null
+}
+
 export default function ProviderForm({
   provider,
   onDiscovered,
@@ -54,6 +76,17 @@ export default function ProviderForm({
   )
   const [limitMonthTokens, setLimitMonthTokens] = useState(
     provider?.limitMonthTokens != null ? String(millionsOf(provider.limitMonthTokens)) : '',
+  )
+  const [pricingMode, setPricingMode] = useState<'none' | 'per_million' | 'monthly'>(
+    provider?.pricingMode === 'per_million' || provider?.pricingMode === 'monthly'
+      ? (provider.pricingMode as 'per_million' | 'monthly')
+      : 'none',
+  )
+  const [pricePerMillionTokens, setPricePerMillionTokens] = useState(
+    provider?.pricePerMillionTokens != null ? String(provider.pricePerMillionTokens) : '',
+  )
+  const [priceMonthly, setPriceMonthly] = useState(
+    provider?.priceMonthly != null ? String(provider.priceMonthly) : '',
   )
   const [effortMapperEnabled, setEffortMapperEnabled] = useState(
     Object.keys(provider?.effortMapping ?? {}).length > 0,
@@ -169,6 +202,19 @@ export default function ProviderForm({
       oauthTokenUrl: oauthTokenUrl.trim(),
       oauthScopes: oauthScopes.trim(),
       ...(oauthRefreshToken.trim().length > 0 ? { oauthRefreshToken: oauthRefreshToken.trim() } : {}),
+      ...(pricingMode === 'per_million'
+        ? {
+            pricingMode,
+            pricePerMillionTokens: Number(pricePerMillionTokens.replace(',', '.')) || null,
+            priceMonthly: null,
+          }
+        : pricingMode === 'monthly'
+          ? {
+              pricingMode,
+              priceMonthly: Number(priceMonthly.replace(',', '.')) || null,
+              pricePerMillionTokens: null,
+            }
+          : { pricingMode: '', pricePerMillionTokens: null, priceMonthly: null }),
     }
     const result = isEditMode
       ? api.updateProvider(provider.id, request)
@@ -371,6 +417,64 @@ export default function ProviderForm({
             можно задать один или несколько, пустое поле = не задан. Незаданная
             категория выводится из заданных (месяц → неделя → 5 часов).
           </p>
+          <div className="form-grid">
+            <label>
+              Стоимость — режим
+              <select
+                value={pricingMode}
+                onChange={(event) =>
+                  setPricingMode(event.target.value as 'none' | 'per_million' | 'monthly')
+                }
+              >
+                <option value="none">не задано</option>
+                <option value="per_million">за 1М токенов, $</option>
+                <option value="monthly">подписка, $/мес</option>
+              </select>
+            </label>
+            {pricingMode === 'per_million' && (
+              <label>
+                Цена за 1 млн токенов, $
+                <input
+                  type="number"
+                  min={0.01}
+                  step={0.01}
+                  value={pricePerMillionTokens}
+                  placeholder="3.00"
+                  onChange={(event) => setPricePerMillionTokens(event.target.value)}
+                />
+              </label>
+            )}
+            {pricingMode === 'monthly' && (
+              <label>
+                Цена подписки, $/мес
+                <input
+                  type="number"
+                  min={0.01}
+                  step={0.01}
+                  value={priceMonthly}
+                  placeholder="20.00"
+                  onChange={(event) => setPriceMonthly(event.target.value)}
+                />
+              </label>
+            )}
+            {pricingMode !== 'none' &&
+              derivedPriceLabel(
+                pricingMode,
+                pricePerMillionTokens,
+                priceMonthly,
+                limitMonthTokens,
+              ) != null && (
+                <span className="muted pricing-derived">
+                  {derivedPriceLabel(pricingMode, pricePerMillionTokens, priceMonthly, limitMonthTokens)}
+                </span>
+              )}
+          </div>
+          {pricingMode !== 'none' && (
+            <p className="muted">
+              Режимы взаимоисключающие: вторая величина рассчитывается из месячного
+              лимита, если он задан, и в БД не сохраняется.
+            </p>
+          )}
           <KeyValueRows
             title="Расширенные настройки — extra-заголовки"
             rows={extraHeaderRows}

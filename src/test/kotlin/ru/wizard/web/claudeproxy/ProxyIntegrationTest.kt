@@ -1147,6 +1147,76 @@ class ProxyIntegrationTest {
             .exchange().expectStatus().isOk // allowlist тоже снят
     }
 
+    @Test
+    fun `тарификация провайдера - режимы, расчётная цена, XOR`() {
+        // per_million + месячный лимит → месячная цена расчётная
+        val created = webTestClient.post().uri("/api/providers")
+            .contentType(MediaType.APPLICATION_JSON)
+            .bodyValue(
+                """{"name":"price-provider","type":"openai","baseUrl":"http://127.0.0.1:${upstreamPort()}",
+                    "apiKey":"x","limitMonthTokens":2000000,
+                    "pricingMode":"per_million","pricePerMillionTokens":3.5}""",
+            )
+            .exchange().expectStatus().isCreated
+            .expectBody(String::class.java).returnResult().responseBody!!
+        val providerId = objectMapper.readTree(created).path("id").asLong()
+
+        // обе цены задавать нельзя
+        webTestClient.post().uri("/api/providers")
+            .contentType(MediaType.APPLICATION_JSON)
+            .bodyValue(
+                """{"name":"price-bad","type":"openai","baseUrl":"http://127.0.0.1:9",
+                    "pricingMode":"per_million","pricePerMillionTokens":3,"priceMonthly":20}""",
+            )
+            .exchange().expectStatus().isEqualTo(400)
+
+        // генерируем расход (echo: 2 токена) для проверки $ в отчёте
+        webTestClient.post().uri("/api/providers/$providerId/models")
+            .contentType(MediaType.APPLICATION_JSON)
+            .bodyValue(
+                """{"publicName":"price-model","upstreamName":"echo-model",
+                    "reasoning":"map","maxCompletionParam":false,"priority":100}""",
+            )
+            .exchange().expectStatus().isCreated
+        webTestClient.post().uri("/v1/messages")
+            .header("x-api-key", SEED_API_KEY)
+            .contentType(MediaType.APPLICATION_JSON)
+            .bodyValue("""{"model":"price-model","max_tokens":50,"messages":[{"role":"user","content":"hi"}]}""")
+            .exchange().expectStatus().isOk
+        awaitUsageEventRow("model = 'price-model'")
+
+        val costsBody = webTestClient.get().uri("/api/provider-costs")
+            .exchange().expectStatus().isOk
+            .expectBody(String::class.java).returnResult().responseBody!!
+        val priceProvider = objectMapper.readTree(costsBody)
+            .firstOrNull { it.path("providerName").asText() == "price-provider" }!!
+        assertEquals(3.5, priceProvider.path("pricePerMillionTokens").asDouble(), 0.001)
+        assertEquals(false, priceProvider.path("pricePerMillionDerived").asBoolean())
+        assertEquals(7.0, priceProvider.path("priceMonthly").asDouble(), 0.001) // 2М × $3.5
+        assertEquals(true, priceProvider.path("priceMonthlyDerived").asBoolean())
+        assertTrue(priceProvider.path("spentTokens30Days").asLong() > 0)
+
+        // monthly-режим: цена за 1М — расчётная из лимита
+        webTestClient.put().uri("/api/providers/$providerId")
+            .contentType(MediaType.APPLICATION_JSON)
+            .bodyValue(
+                """{"name":"price-provider","type":"openai","baseUrl":"http://127.0.0.1:${upstreamPort()}",
+                    "limitMonthTokens":4000000,
+                    "pricingMode":"monthly","priceMonthly":40.0}""",
+            )
+            .exchange().expectStatus().isOk
+        val costsAfter = webTestClient.get().uri("/api/provider-costs")
+            .exchange().expectStatus().isOk
+            .expectBody(String::class.java).returnResult().responseBody!!
+        val afterSwitch = objectMapper.readTree(costsAfter)
+            .firstOrNull { it.path("providerName").asText() == "price-provider" }!!
+        assertEquals(40.0, afterSwitch.path("priceMonthly").asDouble(), 0.001)
+        assertEquals(10.0, afterSwitch.path("pricePerMillionTokens").asDouble(), 0.001) // $40 / 4М
+        assertEquals(true, afterSwitch.path("pricePerMillionDerived").asBoolean())
+
+        webTestClient.delete().uri("/api/providers/$providerId").exchange().expectStatus().isNoContent
+    }
+
     private fun asLong(value: Any?): Long = (value as Number).toLong()
 
     private fun awaitUsageEventRows(condition: String, expectedCount: Int = 1): List<Map<String, Any?>> = runBlocking {

@@ -96,8 +96,9 @@ class JdbcProviderModelService(
                     limit_window_tokens, limit_week_tokens, limit_month_tokens,
                     effort_mapping, auth_type, oauth_grant, oauth_client_id,
                     oauth_client_secret, oauth_token_url, oauth_scopes, oauth_refresh_token,
+                    pricing_mode, price_per_million_tokens, price_monthly,
                     created_at, updated_at)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 request.name,
                 request.type,
                 request.baseUrl,
@@ -115,6 +116,9 @@ class JdbcProviderModelService(
                 request.oauthTokenUrl ?: "",
                 request.oauthScopes ?: "",
                 request.oauthRefreshToken ?: "",
+                request.pricingMode ?: "",
+                request.pricePerMillionTokens,
+                request.priceMonthly,
                 now,
                 now,
             )
@@ -147,7 +151,8 @@ class JdbcProviderModelService(
                 """UPDATE provider SET name = ?, type = ?, base_url = ?, extra_headers = ?,
                    limit_window_tokens = ?, limit_week_tokens = ?, limit_month_tokens = ?,
                    effort_mapping = ?, auth_type = ?, oauth_grant = ?, oauth_client_id = ?,
-                   oauth_token_url = ?, oauth_scopes = ?""" +
+                   oauth_token_url = ?, oauth_scopes = ?,
+                   pricing_mode = ?, price_per_million_tokens = ?, price_monthly = ?""" +
                     (if (request.oauthClientSecret != null && request.oauthClientSecret.isNotBlank()) ", oauth_client_secret = ?" else "") +
                     (if (request.oauthRefreshToken != null && request.oauthRefreshToken.isNotBlank()) ", oauth_refresh_token = ?" else "") +
                     (if (request.exposed != null) ", exposed = ?" else "") +
@@ -337,6 +342,9 @@ class JdbcProviderModelService(
         arguments.add(request.oauthClientId ?: "")
         arguments.add(request.oauthTokenUrl ?: "")
         arguments.add(request.oauthScopes ?: "")
+        arguments.add(request.pricingMode ?: "")
+        arguments.add(request.pricePerMillionTokens)
+        arguments.add(request.priceMonthly)
         if (request.oauthClientSecret != null && request.oauthClientSecret.isNotBlank()) {
             arguments.add(request.oauthClientSecret)
         }
@@ -409,7 +417,9 @@ class JdbcProviderModelService(
             """SELECT name, type, base_url, api_key, extra_headers, exposed,
                       limit_window_tokens, limit_week_tokens, limit_month_tokens,
                       effort_mapping, auth_type, oauth_grant, oauth_client_id,
-                      oauth_token_url, oauth_scopes, created_at, updated_at
+                      oauth_token_url, oauth_scopes,
+                      pricing_mode, price_per_million_tokens, price_monthly,
+                      created_at, updated_at
                FROM provider WHERE id = ?""",
             { resultSet ->
                 providerRows.add(
@@ -429,8 +439,11 @@ class JdbcProviderModelService(
                         resultSet.getString(13),
                         resultSet.getString(14),
                         resultSet.getString(15),
-                        resultSet.getLong(16),
-                        resultSet.getLong(17),
+                        resultSet.getString(16),
+                        resultSet.getDouble(17).takeIf { !resultSet.wasNull() },
+                        resultSet.getDouble(18).takeIf { !resultSet.wasNull() },
+                        resultSet.getLong(19),
+                        resultSet.getLong(20),
                     ),
                 )
             },
@@ -485,9 +498,12 @@ class JdbcProviderModelService(
             oauthClientId = row[12] as String? ?: "",
             oauthTokenUrl = row[13] as String? ?: "",
             oauthScopes = row[14] as String? ?: "",
+            pricingMode = row[15] as String,
+            pricePerMillionTokens = row[16] as Double?,
+            priceMonthly = row[17] as Double?,
             models = models,
-            createdAt = row[15] as Long,
-            updatedAt = row[16] as Long,
+            createdAt = row[18] as Long,
+            updatedAt = row[19] as Long,
         )
     }
 
@@ -532,6 +548,7 @@ class JdbcProviderModelService(
         }
 
     private fun validateProviderRequest(request: ProviderModelService.ProviderRequest) {
+        validatePricing(request)
         if (request.name.trim().isEmpty()) throw badRequest("Имя провайдера обязательно")
         if (request.type !in PROVIDER_TYPES) {
             throw badRequest("Тип провайдера: ожидается anthropic или openai")
@@ -593,6 +610,38 @@ class JdbcProviderModelService(
         if (apiKey.startsWith("\${")) return apiKey // ссылка на ENV — показываем как есть
         if (apiKey.length <= PREVIEW_VISIBLE_LENGTH) return "${apiKey.take(2)}…"
         return "${apiKey.take(PREVIEW_TAIL_LENGTH)}…${apiKey.takeLast(PREVIEW_TAIL_LENGTH)}"
+    }
+
+    /** Тарификация: режим '' без цен; per_million/monthly — ровно одна цена. */
+    private fun validatePricing(request: ProviderModelService.ProviderRequest) {
+        val mode = request.pricingMode ?: ""
+        val perMillion = request.pricePerMillionTokens
+        val monthly = request.priceMonthly
+        when (mode) {
+            "" -> if (perMillion != null || monthly != null) {
+                throw badRequest("Цены заданы без pricingMode (per_million | monthly)")
+            }
+
+            "per_million" -> {
+                if (perMillion == null || perMillion <= 0) {
+                    throw badRequest("pricingMode=per_million: задайте цену за 1М токенов")
+                }
+                if (monthly != null) {
+                    throw badRequest("Нельзя задавать обе цены: выберите per_million или monthly")
+                }
+            }
+
+            "monthly" -> {
+                if (monthly == null || monthly <= 0) {
+                    throw badRequest("pricingMode=monthly: задайте цену подписки за месяц")
+                }
+                if (perMillion != null) {
+                    throw badRequest("Нельзя задавать обе цены: выберите per_million или monthly")
+                }
+            }
+
+            else -> throw badRequest("pricingMode: ожидается per_million или monthly")
+        }
     }
 
     private fun badRequest(message: String): ApiError =

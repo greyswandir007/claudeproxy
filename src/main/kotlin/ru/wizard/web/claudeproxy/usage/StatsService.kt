@@ -165,4 +165,24 @@ interface StatsService {
     )
 
     suspend fun fallbackReport(range: String, clientKey: String?): FallbackReport
+
+    /** Тарификация провайдера: одна цена задана, вторая — расчётная из месячного лимита. */
+    data class ProviderCost(
+        val providerName: String,
+        /** per_million | monthly | "" (не задано). */
+        val pricingMode: String,
+        /** $ за 1М токенов; null — не определена (нет цены и лимита). */
+        val pricePerMillionTokens: Double?,
+        /** false = задана, true = выведена из месячной цены и лимита. */
+        val pricePerMillionDerived: Boolean,
+        /** $ за месяц; null — не определён. */
+        val priceMonthly: Double?,
+        val priceMonthlyDerived: Boolean,
+        /** Токены провайдера за скользящие 7 и 30 дней. */
+        val spentTokens7Days: Long,
+        val spentTokens30Days: Long,
+    )
+
+    /** Провайдеры с тарификацией (цены заданы) + их расход за 7/30 дней. */
+    suspend fun providerCosts(): List<ProviderCost>
 }

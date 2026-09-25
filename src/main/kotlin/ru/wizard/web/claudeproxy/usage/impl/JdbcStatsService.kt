@@ -321,6 +321,72 @@ class JdbcStatsService(
             )
         }
 
+    override suspend fun providerCosts(): List<StatsService.ProviderCost> =
+        databaseProvider.execute { providerCostsBlocking() }
+
+    private data class PricingRow(
+        val name: String,
+        val mode: String,
+        val perMillion: Double?,
+        val monthly: Double?,
+        val monthLimitTokens: Long?,
+    )
+
+    private fun providerCostsBlocking(): List<StatsService.ProviderCost> {
+        val pricingRows = ArrayList<PricingRow>()
+        jdbcTemplate.query(
+            """SELECT name, pricing_mode, price_per_million_tokens, price_monthly,
+                      limit_month_tokens
+               FROM provider WHERE pricing_mode <> '' ORDER BY created_at, id""",
+        ) { resultSet ->
+            pricingRows.add(
+                PricingRow(
+                    name = resultSet.getString(1),
+                    mode = resultSet.getString(2),
+                    perMillion = resultSet.getDouble(3).takeIf { !resultSet.wasNull() },
+                    monthly = resultSet.getDouble(4).takeIf { !resultSet.wasNull() },
+                    monthLimitTokens = resultSet.getLong(5).takeIf { !resultSet.wasNull() },
+                ),
+            )
+        }
+        val now = System.currentTimeMillis()
+        return pricingRows.map { pricing ->
+            val monthLimit = pricing.monthLimitTokens
+            var perMillion = pricing.perMillion
+            var perMillionDerived = false
+            var monthly = pricing.monthly
+            var monthlyDerived = false
+            if (monthLimit != null && monthLimit > 0) {
+                if (perMillion != null && monthly == null) {
+                    monthly = perMillion * monthLimit / 1_000_000
+                    monthlyDerived = true
+                } else if (monthly != null && perMillion == null) {
+                    perMillion = monthly / (monthLimit / 1_000_000)
+                    perMillionDerived = true
+                }
+            }
+            StatsService.ProviderCost(
+                providerName = pricing.name,
+                pricingMode = pricing.mode,
+                pricePerMillionTokens = perMillion,
+                pricePerMillionDerived = perMillionDerived,
+                priceMonthly = monthly,
+                priceMonthlyDerived = monthlyDerived,
+                spentTokens7Days = providerTokensSince(pricing.name, now - 7 * 86_400_000L),
+                spentTokens30Days = providerTokensSince(pricing.name, now - 30 * 86_400_000L),
+            )
+        }
+    }
+
+    private fun providerTokensSince(providerName: String, fromMilliseconds: Long): Long =
+        jdbcTemplate.query(
+            """SELECT COALESCE(SUM(input_tokens + output_tokens + cache_creation_tokens + cache_read_tokens), 0)
+               FROM usage_event WHERE provider = ? AND ts >= ?""",
+            { resultSet, _ -> resultSet.getLong(1) },
+            providerName,
+            fromMilliseconds,
+        ).firstOrNull() ?: 0L
+
     override suspend fun fallbackReport(range: String, clientKey: String?): StatsService.FallbackReport =
         databaseProvider.execute { fallbackReportBlocking(range, clientKey) }
 
