@@ -5,6 +5,7 @@ import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.stereotype.Service
 import ru.wizard.web.claudeproxy.db.DatabaseProvider
 import ru.wizard.web.claudeproxy.proxy.ApiError
+import ru.wizard.web.claudeproxy.proxy.cache.RequestCacheService
 import ru.wizard.web.claudeproxy.usage.StatsService
 import java.time.LocalDate
 import java.time.ZoneId
@@ -714,7 +715,12 @@ class JdbcStatsService(
             """SELECT COUNT(*),
                       COALESCE(SUM(input_tokens), 0), COALESCE(SUM(output_tokens), 0),
                       COALESCE(SUM(cache_creation_tokens), 0), COALESCE(SUM(cache_read_tokens), 0),
-                      COALESCE(SUM(cache_read_tokens + saved_tokens), 0)
+                      COALESCE(SUM(cache_read_tokens + saved_tokens), 0),
+                      COALESCE(SUM(CASE WHEN provider = '${RequestCacheService.CACHE_PROVIDER_NAME}'
+                            THEN saved_tokens ELSE 0 END), 0),
+                      COALESCE(SUM(cache_read_tokens), 0),
+                      COALESCE(SUM(CASE WHEN provider <> '${RequestCacheService.CACHE_PROVIDER_NAME}'
+                            THEN saved_tokens ELSE 0 END), 0)
                FROM usage_event
                WHERE $conditions""",
             { resultSet, _ ->
@@ -725,6 +731,9 @@ class JdbcStatsService(
                     cacheCreationTokens = resultSet.getLong(4),
                     cacheReadTokens = resultSet.getLong(5),
                     savedTokens = resultSet.getLong(6),
+                    savedByRequestCache = resultSet.getLong(7),
+                    savedByPromptCache = resultSet.getLong(8),
+                    savedByTrimming = resultSet.getLong(9),
                 )
             },
             *arguments.toTypedArray(),

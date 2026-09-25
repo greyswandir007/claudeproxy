@@ -8,6 +8,12 @@ export interface UsageTotals {
   cacheReadTokens: number
   /** Кэш-чтения + вырезанное инструментами экономии. */
   savedTokens: number
+  /** Сэкономлено кэшем повторяющихся запросов. */
+  savedByRequestCache: number
+  /** Сэкономлено кэш-чтениями промпта. */
+  savedByPromptCache: number
+  /** Сэкономлено обрезкой истории и удалением картинок. */
+  savedByTrimming: number
 }
 
 export interface WindowSummary {

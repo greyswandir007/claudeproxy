@@ -42,6 +42,20 @@ export default function PeriodCard({ summary }: { summary: RangeSummary }) {
           <> · сэкономлено <strong>{formatTokens(summary.totals.savedTokens)}</strong></>
         )}
       </div>
+      {summary.totals.savedTokens > 0 && (
+        <div className="muted period-savings-detail">
+          {(
+            [
+              ['кэш повторов', summary.totals.savedByRequestCache],
+              ['кэш-чтения', summary.totals.savedByPromptCache],
+              ['обрезка', summary.totals.savedByTrimming],
+            ] as [string, number][]
+          )
+            .filter(([, tokens]) => tokens > 0)
+            .map(([label, tokens]) => `${label} ${formatTokens(tokens)}`)
+            .join(' · ')}
+        </div>
+      )}
     </section>
   )
 }

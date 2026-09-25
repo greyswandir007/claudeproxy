@@ -561,6 +561,10 @@ class ProxyIntegrationTest {
             .jsonPath("$.totals.requests").isEqualTo(1)
             .jsonPath("$.totals.inputTokens").isEqualTo(10)
             .jsonPath("$.totals.outputTokens").isEqualTo(20)
+            // разбивка экономии по источникам: без кэша повторов, но с кэш-чтениями
+            .jsonPath("$.totals.savedByRequestCache").isEqualTo(0)
+            .jsonPath("$.totals.savedByPromptCache").isEqualTo(5)
+            .jsonPath("$.totals.savedByTrimming").isEqualTo(0)
 
         // текущее окно по диапазону window
         webTestClient.get().uri("/api/summary?range=window&key=test")

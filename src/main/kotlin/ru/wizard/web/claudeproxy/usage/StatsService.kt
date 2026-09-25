@@ -13,6 +13,12 @@ interface StatsService {
         val cacheReadTokens: Long,
         /** Кэш-чтения + токены, вырезанные инструментами экономии. */
         val savedTokens: Long = 0,
+        /** Сэкономлено кэшем повторяющихся запросов (usage с provider='cache'). */
+        val savedByRequestCache: Long = 0,
+        /** Сэкономлено кэш-чтениями промпта (cache_read_tokens). */
+        val savedByPromptCache: Long = 0,
+        /** Сэкономлено обрезкой истории и удалением картинок (saved_tokens вне кэша повторов). */
+        val savedByTrimming: Long = 0,
     )
 
     data class GroupedUsage(
