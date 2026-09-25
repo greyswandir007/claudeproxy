@@ -161,7 +161,7 @@ export default function DashboardPage({ refreshTick }: { refreshTick: number }) 
         <UsageTable title="По провайдерам (7 дней)" rows={byProviderRows} labelTitle="Провайдер" />
       </div>
       {providerLimits.length > 0 && (
-        <section className="card">
+        <section className="card dashboard-limits">
           <h2>
             Лимиты провайдеров
             <span className="card-note">информационные; графики моделей — относительно лимита</span>

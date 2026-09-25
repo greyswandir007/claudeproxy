@@ -2,7 +2,6 @@ import {
   Area,
   AreaChart,
   CartesianGrid,
-  Legend,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -78,6 +77,14 @@ export default function TimelineChart({
         <p className="muted">Пока нет данных за период.</p>
       ) : (
         <div className="chart-container">
+          <div className="chart-legend" aria-hidden="true">
+            {SERIES.map((series) => (
+              <span key={series.key} className="chart-legend-item">
+                <span className="chart-legend-swatch" style={{ background: series.color }} />
+                {series.label}
+              </span>
+            ))}
+          </div>
           <ResponsiveContainer width="100%" height={280}>
             <AreaChart data={data} margin={{ top: 8, right: 8, bottom: 0, left: 8 }}>
               <CartesianGrid stroke={GRIDLINE} vertical={false} />
@@ -96,11 +103,6 @@ export default function TimelineChart({
                 tickFormatter={(value: number) => formatTokens(value)}
               />
               <Tooltip content={<ChartTooltip />} />
-              <Legend
-                wrapperStyle={{ color: '#c3c2b7', fontSize: 13 }}
-                iconType="square"
-                iconSize={10}
-              />
               {SERIES.map((series) => (
                 <Area
                   key={series.key}

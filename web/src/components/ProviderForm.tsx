@@ -6,6 +6,15 @@ import KeyValueRows from './KeyValueRows'
 // Расширенный (extra-заголовки): при создании свёрнут, при редактировании — сразу развёрнут.
 // «Загрузить модели провайдера» → чек-лист найденных моделей (выбрать все / снять
 // выделение, публичное имя для каждой); выбранные добавляются при сохранении.
+/** Токены → строка в миллионах, до 2 знаков («5,5» = 5 500 000). */
+const millionsOf = (tokens: number): number => Math.round((tokens / 1_000_000) * 100) / 100
+
+/** Ввод в миллионах → токены; пустое/неположительное — лимит не задан (null). */
+const millionsToTokens = (value: string): number | null => {
+  const parsed = Number(value.replace(',', '.'))
+  return Number.isFinite(parsed) && parsed > 0 ? Math.round(parsed * 1_000_000) : null
+}
+
 export default function ProviderForm({
   provider,
   onDiscovered,
@@ -26,13 +35,13 @@ export default function ProviderForm({
     Object.entries(provider?.extraHeaders ?? {}).map(([key, value]) => ({ key, value })),
   )
   const [limitWindowTokens, setLimitWindowTokens] = useState(
-    provider?.limitWindowTokens != null ? String(provider.limitWindowTokens) : '',
+    provider?.limitWindowTokens != null ? String(millionsOf(provider.limitWindowTokens)) : '',
   )
   const [limitWeekTokens, setLimitWeekTokens] = useState(
-    provider?.limitWeekTokens != null ? String(provider.limitWeekTokens) : '',
+    provider?.limitWeekTokens != null ? String(millionsOf(provider.limitWeekTokens)) : '',
   )
   const [limitMonthTokens, setLimitMonthTokens] = useState(
-    provider?.limitMonthTokens != null ? String(provider.limitMonthTokens) : '',
+    provider?.limitMonthTokens != null ? String(millionsOf(provider.limitMonthTokens)) : '',
   )
   const [showExtended, setShowExtended] = useState(isEditMode)
 
@@ -86,12 +95,6 @@ export default function ProviderForm({
       Object.fromEntries(discoveredModels.map((upstream) => [upstream, true])),
     )
 
-  /** Пустое или неположительное значение — лимит не задан (null). */
-  const positiveLimitOrNull = (value: string): number | null => {
-    const parsed = Number(value)
-    return Number.isFinite(parsed) && parsed > 0 ? Math.round(parsed) : null
-  }
-
   const clearDiscoveredSelection = () =>
     setSelectedDiscovered(
       Object.fromEntries(discoveredModels.map((upstream) => [upstream, false])),
@@ -111,9 +114,9 @@ export default function ProviderForm({
       baseUrl: baseUrl.trim(),
       apiKey: apiKey.trim().length > 0 ? apiKey.trim() : undefined,
       extraHeaders,
-      limitWindowTokens: positiveLimitOrNull(limitWindowTokens),
-      limitWeekTokens: positiveLimitOrNull(limitWeekTokens),
-      limitMonthTokens: positiveLimitOrNull(limitMonthTokens),
+      limitWindowTokens: millionsToTokens(limitWindowTokens),
+      limitWeekTokens: millionsToTokens(limitWeekTokens),
+      limitMonthTokens: millionsToTokens(limitMonthTokens),
     }
     const result = isEditMode
       ? api.updateProvider(provider.id, request)
@@ -205,30 +208,33 @@ export default function ProviderForm({
         <>
           <div className="form-grid">
             <label>
-              Расширенные: лимит токенов — 5 часов
+              Расширенные: лимит, млн токенов — 5 часов
               <input
                 type="number"
-                min={1}
+                min={0.1}
+                step={0.1}
                 value={limitWindowTokens}
-                placeholder="не задан"
+                placeholder="не задан (5,5 = 5,5 млн)"
                 onChange={(event) => setLimitWindowTokens(event.target.value)}
               />
             </label>
             <label>
-              Лимит токенов — неделя (7 дней)
+              Лимит, млн токенов — неделя (7 дней)
               <input
                 type="number"
-                min={1}
+                min={0.1}
+                step={0.1}
                 value={limitWeekTokens}
                 placeholder="не задан"
                 onChange={(event) => setLimitWeekTokens(event.target.value)}
               />
             </label>
             <label>
-              Лимит токенов — месяц (30 дней)
+              Лимит, млн токенов — месяц (30 дней)
               <input
                 type="number"
-                min={1}
+                min={0.1}
+                step={0.1}
                 value={limitMonthTokens}
                 placeholder="не задан"
                 onChange={(event) => setLimitMonthTokens(event.target.value)}
@@ -236,8 +242,9 @@ export default function ProviderForm({
             </label>
           </div>
           <p className="muted">
-            Лимиты информационные — видны на экране «Модели и провайдеры» как выработка;
-            можно задать один или несколько, пустое поле = не задан.
+            Лимиты в миллионах токенов, информационные — выработка видна на дашборде;
+            можно задать один или несколько, пустое поле = не задан. Незаданная
+            категория выводится из заданных (месяц → неделя → 5 часов).
           </p>
           <KeyValueRows
             title="Расширенные настройки — extra-заголовки"

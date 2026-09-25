@@ -77,16 +77,20 @@ interface StatsService {
         val toMilliseconds: Long,
         /** Разбивка выработки по моделям провайдера (для графиков к лимиту). */
         val modelTokens: List<ModelTokens>,
+        /** true — лимит не задан, выведен из другой категории (только отображение). */
+        val derived: Boolean,
     )
 
     data class ProviderLimitUsage(
         val providerName: String,
-        /** Текущее 5-часовое окно провайдера; null — лимит не задан. */
+        /** 5-часовое окно провайдера (активное или последнее истекшее); null — лимит не задан. */
         val window: LimitPeriodUsage?,
         /** Последние 7 дней; null — лимит не задан. */
         val week: LimitPeriodUsage?,
         /** Последние 30 дней; null — лимит не задан. */
         val month: LimitPeriodUsage?,
+        /** true — окно активно прямо сейчас; false — показано последнее истекшее. */
+        val windowActive: Boolean,
     )
 
     /** Только провайдеры, у которых задан хотя бы один лимит. */

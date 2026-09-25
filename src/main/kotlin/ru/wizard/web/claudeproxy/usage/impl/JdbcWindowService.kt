@@ -35,19 +35,20 @@ class JdbcWindowService(
 
     override fun currentProviderWindow(providerName: String): WindowService.WindowBounds? {
         val bounds = ArrayList<WindowService.WindowBounds>()
+        val now = System.currentTimeMillis()
         jdbcTemplate.query(
             "SELECT started_at, ends_at FROM provider_usage_window " +
-                "WHERE provider_name = ? AND ends_at > ? ORDER BY started_at DESC LIMIT 1",
+                "WHERE provider_name = ? ORDER BY started_at DESC LIMIT 1",
             { resultSet ->
                 bounds.add(
                     WindowService.WindowBounds(
                         startedAtMilliseconds = resultSet.getLong(1),
                         endsAtMilliseconds = resultSet.getLong(2),
+                        active = resultSet.getLong(2) > now,
                     ),
                 )
             },
             providerName,
-            System.currentTimeMillis(),
         )
         return bounds.firstOrNull()
     }

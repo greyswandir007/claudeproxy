@@ -124,6 +124,30 @@ class JdbcStatsService(
             )
         }
 
+    /** Эффективный лимит категории: задан или выведен из другой (приоритет месяц → неделя → окно). */
+    private data class EffectiveLimit(val tokens: Long, val derived: Boolean)
+
+    private fun windowLimitOf(row: ProviderLimitsRow): EffectiveLimit? = when {
+        row.window != null -> EffectiveLimit(row.window, derived = false)
+        row.month != null -> EffectiveLimit(Math.round(row.month / WINDOWS_PER_MONTH.toDouble()), derived = true)
+        row.week != null -> EffectiveLimit(Math.round(row.week / WINDOWS_PER_WEEK.toDouble()), derived = true)
+        else -> null
+    }
+
+    private fun weekLimitOf(row: ProviderLimitsRow): EffectiveLimit? = when {
+        row.week != null -> EffectiveLimit(row.week, derived = false)
+        row.month != null -> EffectiveLimit(Math.round(row.month / WEEKS_PER_MONTH.toDouble()), derived = true)
+        row.window != null -> EffectiveLimit(Math.round(row.window * WINDOWS_PER_WEEK.toDouble()), derived = true)
+        else -> null
+    }
+
+    private fun monthLimitOf(row: ProviderLimitsRow): EffectiveLimit? = when {
+        row.month != null -> EffectiveLimit(row.month, derived = false)
+        row.week != null -> EffectiveLimit(Math.round(row.week * WEEKS_PER_MONTH.toDouble()), derived = true)
+        row.window != null -> EffectiveLimit(row.window * WINDOWS_PER_MONTH, derived = true)
+        else -> null
+    }
+
     override suspend fun providerLimitUsage(): List<StatsService.ProviderLimitUsage> =
         databaseProvider.execute { providerLimitUsageBlocking() }
 
@@ -149,45 +173,67 @@ class JdbcStatsService(
         }
         val now = System.currentTimeMillis()
         return limitRows.map { limitsRow ->
-            val windowUsage = limitsRow.window?.let { limit ->
-                val bounds = windowService.currentProviderWindow(limitsRow.name)
-                val from = bounds?.startedAtMilliseconds ?: now
+            val providerWindowBounds = windowService.currentProviderWindow(limitsRow.name)
+            val windowUsage = windowLimitOf(limitsRow)?.let { effectiveLimit ->
+                val from = providerWindowBounds?.startedAtMilliseconds ?: now
+                val to = providerWindowBounds?.endsAtMilliseconds ?: now
+                // истекшее окно не расходует лимит: новое начнётся с нуля,
+                // поэтому показываем 0 (выработка последнего окна не вводит в заблуждение)
+                val windowCurrentlyActive = providerWindowBounds?.active == true
                 StatsService.LimitPeriodUsage(
-                    limitTokens = limit,
-                    spentTokens = totalsBetween(from, now, null, limitsRow.name).totalTokens(),
+                    limitTokens = effectiveLimit.tokens,
+                    spentTokens = if (windowCurrentlyActive) {
+                        totalsBetween(from, now, null, limitsRow.name).totalTokens()
+                    } else {
+                        0
+                    },
                     fromMilliseconds = from,
-                    toMilliseconds = bounds?.endsAtMilliseconds ?: now,
-                    modelTokens = modelTokensFor(limitsRow.name, from, now),
+                    toMilliseconds = to,
+                    modelTokens = if (windowCurrentlyActive) {
+                        modelTokensFor(limitsRow.name, from, now)
+                    } else {
+                        emptyList()
+                    },
+                    derived = effectiveLimit.derived,
                 )
             }
-            val weekUsage = limitsRow.week?.let { limit ->
+            val weekUsage = weekLimitOf(limitsRow)?.let { effectiveLimit ->
                 val from = now - 7 * 86_400_000L
                 StatsService.LimitPeriodUsage(
-                    limitTokens = limit,
+                    limitTokens = effectiveLimit.tokens,
                     spentTokens = totalsBetween(from, now, null, limitsRow.name).totalTokens(),
                     fromMilliseconds = from,
                     toMilliseconds = now,
                     modelTokens = modelTokensFor(limitsRow.name, from, now),
+                    derived = effectiveLimit.derived,
                 )
             }
-            val monthUsage = limitsRow.month?.let { limit ->
+            val monthUsage = monthLimitOf(limitsRow)?.let { effectiveLimit ->
                 val from = now - 30 * 86_400_000L
                 StatsService.LimitPeriodUsage(
-                    limitTokens = limit,
+                    limitTokens = effectiveLimit.tokens,
                     spentTokens = totalsBetween(from, now, null, limitsRow.name).totalTokens(),
                     fromMilliseconds = from,
                     toMilliseconds = now,
                     modelTokens = modelTokensFor(limitsRow.name, from, now),
+                    derived = effectiveLimit.derived,
                 )
             }
-            StatsService.ProviderLimitUsage(limitsRow.name, windowUsage, weekUsage, monthUsage)
+            StatsService.ProviderLimitUsage(
+                providerName = limitsRow.name,
+                window = windowUsage,
+                week = weekUsage,
+                month = monthUsage,
+                windowActive = providerWindowBounds?.active ?: false,
+            )
         }
     }
 
     private fun StatsService.UsageTotals.totalTokens(): Long =
         inputTokens + outputTokens + cacheCreationTokens + cacheReadTokens
 
-    /** Токены по моделям провайдера за период (убывание). */
+    /** Токены по моделям провайдера за период (убывание; нулевые строки —
+     *  неудачные попытки fallback — не включаются). */
     private fun modelTokensFor(providerName: String, fromMilliseconds: Long, toMilliseconds: Long): List<StatsService.ModelTokens> =
         jdbcTemplate.query(
             """SELECT model,
@@ -195,6 +241,7 @@ class JdbcStatsService(
                FROM usage_event
                WHERE ts >= ? AND ts <= ? AND provider = ?
                GROUP BY model
+               HAVING SUM(input_tokens + output_tokens + cache_creation_tokens + cache_read_tokens) > 0
                ORDER BY 2 DESC""",
             { resultSet, _ ->
                 StatsService.ModelTokens(
@@ -334,5 +381,10 @@ class JdbcStatsService(
         const val RANGE_TODAY = "today"
         const val RANGE_7_DAYS = "7d"
         const val RANGE_30_DAYS = "30d"
+
+        /** Окно 5ч; неделя 168ч = 33,6 окна; месяц 720ч = 144 окна ≈ 4,29 недели. */
+        const val WINDOWS_PER_WEEK = 33.6
+        const val WINDOWS_PER_MONTH = 144L
+        const val WEEKS_PER_MONTH = 4.29
     }
 }

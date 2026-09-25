@@ -8,11 +8,17 @@ package ru.wizard.web.claudeproxy.usage
  */
 interface WindowService {
 
-    data class WindowBounds(val startedAtMilliseconds: Long, val endsAtMilliseconds: Long)
+    data class WindowBounds(
+        val startedAtMilliseconds: Long,
+        val endsAtMilliseconds: Long,
+        /** false — последнее окно уже истекло (новое начнётся первым обращением). */
+        val active: Boolean,
+    )
 
     fun ensureWindow(clientKey: String, timestamp: Long)
 
     fun ensureProviderWindow(providerName: String, timestamp: Long)
 
+    /** Последнее окно провайдера (в том числе истекшее) или null, если окон не было. */
     fun currentProviderWindow(providerName: String): WindowBounds?
 }

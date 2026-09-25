@@ -151,6 +151,7 @@ body {
 }
 
 .progress-track {
+  display: block; /* span-треки тоже должны принимать width */
   height: 8px;
   border-radius: 4px;
   background: var(--gridline);
@@ -158,6 +159,7 @@ body {
 }
 
 .progress-fill {
+  display: block; /* inline-span игнорирует width — заполнение не рисовалось */
   height: 100%;
   background: var(--series-blue);
   border-radius: 4px;
@@ -244,6 +246,28 @@ body {
 
 .chart-card {
   margin-bottom: 14px;
+}
+
+.chart-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 18px;
+  margin: 0 0 8px;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.chart-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.chart-legend-swatch {
+  width: 11px;
+  height: 11px;
+  border-radius: 3px;
+  flex: none;
 }
 
 .chart-tooltip {
@@ -340,6 +364,10 @@ th.numeric {
   display: block;
   height: 100%;
   background: var(--series-blue);
+}
+
+.limit-track .progress-fill {
+  border-radius: 3px;
 }
 
 .keys-page,
@@ -648,6 +676,10 @@ th.numeric {
 
 .limit-model-track {
   height: 4px;
+}
+
+.dashboard-limits {
+  margin-bottom: 14px;
 }
 
 .dashboard-limit-provider {

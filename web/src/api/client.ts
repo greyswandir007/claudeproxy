@@ -160,6 +160,8 @@ export interface LimitPeriodUsage {
   fromMilliseconds: number
   toMilliseconds: number
   modelTokens: ModelTokens[]
+  /** true — лимит выведен из другой категории (в БД не хранится). */
+  derived: boolean
 }
 
 export interface ProviderLimitUsage {
@@ -167,6 +169,8 @@ export interface ProviderLimitUsage {
   window: LimitPeriodUsage | null
   week: LimitPeriodUsage | null
   month: LimitPeriodUsage | null
+  /** true — окно активно; false — показано последнее истекшее. */
+  windowActive: boolean
 }
 
 export interface ModelRequest {

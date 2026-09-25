@@ -730,12 +730,58 @@ class ProxyIntegrationTest {
             .firstOrNull { it.path("providerName").asText() == "limits-provider" }!!
         assertEquals(1000L, usage.path("window").path("limitTokens").asLong())
         assertEquals(157L, usage.path("window").path("spentTokens").asLong())
+        assertEquals(false, usage.path("window").path("derived").asBoolean())
+        assertEquals(true, usage.path("windowActive").asBoolean())
+
+        // истёкшее окно: выработка обнуляется, пока не начнётся новое
+        jdbcTemplate.update(
+            "UPDATE provider_usage_window SET started_at = ?, ends_at = ? WHERE provider_name = 'limits-provider'",
+            System.currentTimeMillis() - 6 * 3_600_000L,
+            System.currentTimeMillis() - 3_600_000L,
+        )
+        val expiredBody = webTestClient.get().uri("/api/provider-limits")
+            .exchange().expectStatus().isOk
+            .expectBody(String::class.java).returnResult().responseBody!!
+        val expiredUsage = objectMapper.readTree(expiredBody)
+            .firstOrNull { it.path("providerName").asText() == "limits-provider" }!!
+        assertEquals(false, expiredUsage.path("windowActive").asBoolean())
+        assertEquals(0L, expiredUsage.path("window").path("spentTokens").asLong())
+        assertEquals(0, expiredUsage.path("window").path("modelTokens").size())
         // разбивка по моделям — для графиков относительно лимита
         assertEquals("limits-model", usage.path("window").path("modelTokens").get(0).path("modelName").asText())
         assertEquals(157L, usage.path("window").path("modelTokens").get(0).path("tokens").asLong())
-        assertTrue(usage.path("week").isNull)
+        // неделя не задана — выводится из месячного (100000 / 4.29)
+        assertEquals(true, usage.path("week").path("derived").asBoolean())
+        assertEquals(23310L, usage.path("week").path("limitTokens").asLong())
         assertEquals(100000L, usage.path("month").path("limitTokens").asLong())
         assertEquals(157L, usage.path("month").path("spentTokens").asLong())
+
+        // провайдер только с недельным лимитом: окно и месяц — производные
+        val weekOnlyCreated = webTestClient.post().uri("/api/providers")
+            .contentType(MediaType.APPLICATION_JSON)
+            .bodyValue(
+                """{"name":"week-only-limits-provider","type":"openai",
+                    "baseUrl":"http://127.0.0.1:9","apiKey":"x","limitWeekTokens":33600000}""",
+            )
+            .exchange().expectStatus().isCreated
+            .expectBody(String::class.java).returnResult().responseBody!!
+        val weekOnlyProviderId = objectMapper.readTree(weekOnlyCreated).path("id").asLong()
+        val weekOnlyBody = webTestClient.get().uri("/api/provider-limits")
+            .exchange().expectStatus().isOk
+            .expectBody(String::class.java).returnResult().responseBody!!
+        val weekOnly = objectMapper.readTree(weekOnlyBody)
+            .firstOrNull { it.path("providerName").asText() == "week-only-limits-provider" }!!
+        assertEquals(false, weekOnly.path("week").path("derived").asBoolean())
+        assertEquals(33600000L, weekOnly.path("week").path("limitTokens").asLong())
+        assertEquals(true, weekOnly.path("window").path("derived").asBoolean())
+        assertEquals(1000000L, weekOnly.path("window").path("limitTokens").asLong()) // 33.6M / 33.6
+        // окон у провайдера не было вовсе — показывается неактивное состояние
+        assertEquals(false, weekOnly.path("windowActive").asBoolean())
+        assertEquals(0L, weekOnly.path("window").path("spentTokens").asLong())
+        assertEquals(true, weekOnly.path("month").path("derived").asBoolean())
+        assertEquals(144144000L, weekOnly.path("month").path("limitTokens").asLong()) // 33.6M * 4.29
+        webTestClient.delete().uri("/api/providers/$weekOnlyProviderId")
+            .exchange().expectStatus().isNoContent
 
         // провайдеры без лимитов в выработку не попадают
         assertTrue(
