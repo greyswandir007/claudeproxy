@@ -50,6 +50,9 @@ class ProxyIntegrationTest {
     @Autowired
     private lateinit var proxyProperties: ru.wizard.web.claudeproxy.config.ProxyProperties
 
+    @Autowired
+    private lateinit var modelRegistry: ru.wizard.web.claudeproxy.routing.ModelRegistry
+
     private lateinit var webTestClient: WebTestClient
 
     @BeforeEach
@@ -426,10 +429,9 @@ class ProxyIntegrationTest {
     }
 
     @Test
-    fun `system-роль внутри messages нормализуется в user до отправки провайдеру`() {
+    fun `system-роль внутри messages конвертируется в user по настройке провайдера`() {
         // Claude Code шлёт служебные напоминания с role=system внутри messages;
-        // LM Studio/Qwen падают с «System message must be at the beginning» —
-        // прокси обязан конвертировать их в user до похода к провайдеру
+        // фейковый апстрим (как LM Studio/Qwen) отвечает 400 на такой запрос
         val body = """
             {"model":"fake-model","max_tokens":100,
              "messages":[
@@ -440,15 +442,39 @@ class ProxyIntegrationTest {
              ]}
         """.trimIndent()
 
-        // фейковый апстрим отвечает 400 «System message must be at the beginning»,
-        // если system-роль дошла до него внутри messages — значит, нормализация сработала
+        // без настройки — поведение прежнее: ошибка апстрима пробрасывается клиенту
         webTestClient.post().uri("/v1/messages")
             .header("x-api-key", SEED_API_KEY)
             .contentType(MediaType.APPLICATION_JSON)
             .bodyValue(body)
-            .exchange().expectStatus().isOk
+            .exchange().expectStatus().isBadRequest
             .expectBody()
-            .jsonPath("$.content[0].text").isEqualTo("hello")
+            .jsonPath("$.error.message").isEqualTo("System message must be at the beginning")
+
+        // с CONVERT_SYSTEM_MESSAGES_TO_USER — нормализация в user, апстрим отвечает 200
+        val providerId = jdbcTemplate.queryForObject(
+            "SELECT id FROM provider WHERE name = 'fake'", Long::class.java,
+        )!!
+        jdbcTemplate.update(
+            "INSERT INTO provider_setting (provider_id, setting_key, setting_value) VALUES (?, ?, ?)",
+            providerId, "CONVERT_SYSTEM_MESSAGES_TO_USER", "true",
+        )
+        try {
+            runBlocking { modelRegistry.reload() }
+            webTestClient.post().uri("/v1/messages")
+                .header("x-api-key", SEED_API_KEY)
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(body)
+                .exchange().expectStatus().isOk
+                .expectBody()
+                .jsonPath("$.content[0].text").isEqualTo("hello")
+        } finally {
+            jdbcTemplate.update(
+                "DELETE FROM provider_setting WHERE provider_id = ? AND setting_key = ?",
+                providerId, "CONVERT_SYSTEM_MESSAGES_TO_USER",
+            )
+            runBlocking { modelRegistry.reload() }
+        }
     }
 
     @Test

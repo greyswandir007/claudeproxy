@@ -233,6 +233,7 @@ export const SETTING_CATALOG: SettingDefinition[] = [
   { key: 'TRIM_OLD_TOOL_RESULTS', title: 'Экономия: обрезка старых tool_result', description: 'Старше последних 4 → «[trimmed]»', valueType: 'BOOLEAN', placeholder: 'true' },
   { key: 'DROP_OLD_TOOL_IMAGES', title: 'Экономия: удаление старых картинок', description: 'Старше последних 2 сообщений (~1600 токенов/шт)', valueType: 'BOOLEAN', placeholder: 'true' },
   { key: 'REQUEST_CACHE_TTL_MS', title: 'Экономия: кэш повторов, TTL (мс)', description: 'Точный повтор запроса внутри окна отдаётся из кэша бесплатно; 0 — выключить кэш для провайдера', valueType: 'LONG', placeholder: '600000' },
+  { key: 'CONVERT_SYSTEM_MESSAGES_TO_USER', title: 'Совместимость: system → user внутри messages', description: 'Для локальных движков (LM Studio/Qwen): роль system внутри messages конвертируется в user', valueType: 'BOOLEAN', placeholder: 'true' },
 ]
 
 export const EFFORT_LEVELS = ['low', 'medium', 'high', 'xhigh', 'max'] as const

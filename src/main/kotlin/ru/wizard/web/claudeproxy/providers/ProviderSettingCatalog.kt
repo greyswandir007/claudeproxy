@@ -101,6 +101,13 @@ object ProviderSettingCatalog {
             valueType = ValueType.LONG,
             placeholder = "600000",
         ),
+        SettingDefinition(
+            key = "CONVERT_SYSTEM_MESSAGES_TO_USER",
+            title = "Совместимость: system → user внутри messages",
+            description = "Сообщения с ролью system внутри messages (служебные напоминания клиентов) конвертируются в user — нужно локальным движкам (LM Studio/Qwen), иначе «System message must be at the beginning»",
+            valueType = ValueType.BOOLEAN,
+            placeholder = "true",
+        ),
     )
 
     private val byKey = definitions.associateBy { it.key }

@@ -335,7 +335,9 @@ class WebClientAnthropicHandler(
         val provider = route.provider
         val rewrittenRequest = (requestRoot as ObjectNode).deepCopy()
             .put("model", route.mapping.upstreamName)
-        normalizeMidConversationSystemMessages(rewrittenRequest)
+        if (provider.settingOverrides[CONVERT_SYSTEM_MESSAGES_TO_USER] == "true") {
+            normalizeMidConversationSystemMessages(rewrittenRequest)
+        }
         requestAdjuster.adjust(rewrittenRequest, provider)
         val savedTokens = tokenSavingAdjuster.adjust(rewrittenRequest, provider)
         val requestSpecification = webClient.post()
@@ -375,9 +377,15 @@ class WebClientAnthropicHandler(
         }
     }
 
+    private companion object {
+        /** Оверрайд провайдера: конвертировать role=system внутри messages в user. */
+        const val CONVERT_SYSTEM_MESSAGES_TO_USER = "CONVERT_SYSTEM_MESSAGES_TO_USER"
+    }
+
     private fun buildClientResponse(
         exchange: ServerWebExchange,
-        responseEntity: org.springframework.http.ResponseEntity<String>,    ): ResponseEntity<Flux<DataBuffer>> {
+        responseEntity: org.springframework.http.ResponseEntity<String>,
+    ): ResponseEntity<Flux<DataBuffer>> {
         val responseBuilder = ResponseEntity.status(responseEntity.statusCode)
             .contentType(responseEntity.headers.contentType ?: MediaType.APPLICATION_JSON)
         responseEntity.headers.getFirst(HttpHeaders.RETRY_AFTER)
