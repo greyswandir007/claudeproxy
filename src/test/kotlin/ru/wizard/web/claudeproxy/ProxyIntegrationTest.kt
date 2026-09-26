@@ -426,6 +426,32 @@ class ProxyIntegrationTest {
     }
 
     @Test
+    fun `system-роль внутри messages нормализуется в user до отправки провайдеру`() {
+        // Claude Code шлёт служебные напоминания с role=system внутри messages;
+        // LM Studio/Qwen падают с «System message must be at the beginning» —
+        // прокси обязан конвертировать их в user до похода к провайдеру
+        val body = """
+            {"model":"fake-model","max_tokens":100,
+             "messages":[
+               {"role":"user","content":"первый"},
+               {"role":"assistant","content":"ответ"},
+               {"role":"system","content":"<total_tokens>1000 left</total_tokens>"},
+               {"role":"user","content":"второй"}
+             ]}
+        """.trimIndent()
+
+        // фейковый апстрим отвечает 400 «System message must be at the beginning»,
+        // если system-роль дошла до него внутри messages — значит, нормализация сработала
+        webTestClient.post().uri("/v1/messages")
+            .header("x-api-key", SEED_API_KEY)
+            .contentType(MediaType.APPLICATION_JSON)
+            .bodyValue(body)
+            .exchange().expectStatus().isOk
+            .expectBody()
+            .jsonPath("$.content[0].text").isEqualTo("hello")
+    }
+
+    @Test
     fun `count_tokens пробрасывается`() {
         webTestClient.post().uri("/v1/messages/count_tokens")
             .header("x-api-key", SEED_API_KEY)
@@ -1659,6 +1685,21 @@ class ProxyIntegrationTest {
                                         .header("Content-Type", "application/json")
                                         .sendString(
                                             Mono.just("""{"input_tokens":42}"""),
+                                            CharsetUtil.UTF_8,
+                                        )
+                                        .then()
+
+                                // как LM Studio/Qwen: роль system внутри messages — ошибка шаблона
+                                requestNode?.path("messages")?.any {
+                                    it.path("role").asText() == "system"
+                                } == true ->
+                                    response.status(HttpResponseStatus.BAD_REQUEST)
+                                        .header("Content-Type", "application/json")
+                                        .sendString(
+                                            Mono.just(
+                                                """{"type":"error","error":{"type":"invalid_request_error",""" +
+                                                    """"message":"System message must be at the beginning"}}""",
+                                            ),
                                             CharsetUtil.UTF_8,
                                         )
                                         .then()

@@ -335,6 +335,7 @@ class WebClientAnthropicHandler(
         val provider = route.provider
         val rewrittenRequest = (requestRoot as ObjectNode).deepCopy()
             .put("model", route.mapping.upstreamName)
+        normalizeMidConversationSystemMessages(rewrittenRequest)
         requestAdjuster.adjust(rewrittenRequest, provider)
         val savedTokens = tokenSavingAdjuster.adjust(rewrittenRequest, provider)
         val requestSpecification = webClient.post()
@@ -353,10 +354,30 @@ class WebClientAnthropicHandler(
         return requestSpecification.bodyValue(objectMapper.writeValueAsBytes(rewrittenRequest)) to savedTokens
     }
 
+    /**
+     * Роль system внутри messages невалидна по спецификации Anthropic, но клиенты
+     * так шлют служебные напоминания (бюджет токенов и т.п.); локальные движки
+     * (LM Studio/Qwen) на этом падают («System message must be at the beginning») —
+     * конвертируем такие сообщения в user-роль, содержимое не меняется.
+     */
+    private fun normalizeMidConversationSystemMessages(requestRoot: ObjectNode) {
+        val messages = requestRoot.path("messages")
+        if (!messages.isArray) return
+        var normalizedCount = 0
+        for (message in messages) {
+            if (message is ObjectNode && message.path("role").asText() == "system") {
+                message.put("role", "user")
+                normalizedCount++
+            }
+        }
+        if (normalizedCount > 0) {
+            logger.debug { "normalized $normalizedCount mid-conversation system messages to user role" }
+        }
+    }
+
     private fun buildClientResponse(
         exchange: ServerWebExchange,
-        responseEntity: org.springframework.http.ResponseEntity<String>,
-    ): ResponseEntity<Flux<DataBuffer>> {
+        responseEntity: org.springframework.http.ResponseEntity<String>,    ): ResponseEntity<Flux<DataBuffer>> {
         val responseBuilder = ResponseEntity.status(responseEntity.statusCode)
             .contentType(responseEntity.headers.contentType ?: MediaType.APPLICATION_JSON)
         responseEntity.headers.getFirst(HttpHeaders.RETRY_AFTER)
