@@ -307,7 +307,6 @@ export default function DashboardPage({ refreshTick }: { refreshTick: number }) 
             </button>
           ))}
         </div>
-        <span className="muted">шаг по времени: {bucket === 'hour' ? '1 час' : '1 день'}</span>
       </div>
       <TimelineChart
         data={timelineRows}
