@@ -345,11 +345,18 @@ export interface ProviderHealth {
 }
 
 export interface FailedAttempt {
+  /** Идентификатор события usage_event — ключ запроса полной расшифровки. */
+  id: number
   timestamp: number
   model: string
   providerName: string
   status: number
   error: string
+}
+
+export interface ErrorDetail {
+  eventId: number
+  errorDetail: string
 }
 
 export interface FallbackReport {
@@ -464,6 +471,7 @@ export const api = {
     getJson<FallbackReport>(
       `/api/fallback-report?range=${range}${key ? `&key=${encodeURIComponent(key)}` : ''}`,
     ),
+  errorDetail: (eventId: number) => getJson<ErrorDetail>(`/api/stats/errors/${eventId}`),
   routeCooldowns: () => getJson<RouteCooldown[]>('/api/route-cooldowns'),
   providerCosts: () => getJson<ProviderCost[]>('/api/provider-costs'),
 }

@@ -17,6 +17,7 @@ import reactor.core.publisher.SignalType
 import ru.wizard.web.claudeproxy.auth.ApiKeyAuthFilter
 import ru.wizard.web.claudeproxy.proxy.AnthropicHandler
 import ru.wizard.web.claudeproxy.proxy.ProviderRequestAdjuster
+import ru.wizard.web.claudeproxy.proxy.ProxyErrorDetails
 import ru.wizard.web.claudeproxy.proxy.TokenSavingAdjuster
 import ru.wizard.web.claudeproxy.proxy.cache.CachedResponsePresenter
 import ru.wizard.web.claudeproxy.proxy.cache.RequestCacheService
@@ -156,6 +157,11 @@ class WebClientAnthropicHandler(
                             } else {
                                 null
                             },
+                            errorDetail = if (!responseEntity.statusCode.is2xxSuccessful()) {
+                                ProxyErrorDetails.ofBody(responseEntity.body)
+                            } else {
+                                null
+                            },
                             savedTokens = savedTokens,
                         ),
                     )
@@ -190,6 +196,7 @@ class WebClientAnthropicHandler(
                             startedAtMilliseconds = startedAtMilliseconds,
                             status = errorStatus(error),
                             error = shortError(error),
+                            errorDetail = ProxyErrorDetails.of(error),
                             savedTokens = 0,
                         ),
                     )
@@ -256,6 +263,7 @@ class WebClientAnthropicHandler(
                             startedAtMilliseconds = startedAtMilliseconds,
                             status = errorStatus(error),
                             error = shortError(error),
+                            errorDetail = ProxyErrorDetails.of(error),
                             savedTokens = 0,
                         ),
                     )
@@ -419,6 +427,7 @@ class WebClientAnthropicHandler(
         status: Int,
         error: String?,
         savedTokens: Long = 0,
+        errorDetail: String? = null,
     ) = UsageEvent(
         ts = System.currentTimeMillis(),
         clientKey = clientKey,
@@ -434,6 +443,7 @@ class WebClientAnthropicHandler(
         status = status,
         error = error,
         savedTokens = savedTokens,
+        errorDetail = errorDetail,
     )
 
     private fun serverSentEventErrorBytes(message: String?): ByteArray {

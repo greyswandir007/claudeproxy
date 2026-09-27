@@ -16,7 +16,7 @@ import {
   type ProviderWindowBoundary,
   type WindowSummary,
 } from '../api/client'
-import PeriodNavigator, { type PeriodRange } from '../components/PeriodNavigator'
+import PeriodNavigator, { rollingPresetRange, type PeriodRange } from '../components/PeriodNavigator'
 import PeriodCard from '../components/PeriodCard'
 import CostSection from '../components/CostSection'
 import ProviderLimitBars from '../components/ProviderLimitBars'
@@ -62,6 +62,15 @@ export default function DashboardPage({ refreshTick }: { refreshTick: number }) 
   }))
   const [sliceMode, setSliceMode] = useState<SliceMode>('total')
 
+  // Скользящие пресеты («сегодня», «7 дней», «30 дней») пересчитывают правую
+  // границу к текущему моменту на каждом такте обновления: иначе новые корзины
+  // попадают за правую границу зафиксированного диапазона, и график «замирает»
+  // до перезагрузки страницы. refreshTick в зависимостях именно поэтому.
+  const effectiveRange = useMemo(
+    () => rollingPresetRange(selectedPreset) ?? periodRange,
+    [selectedPreset, periodRange, refreshTick],
+  )
+
   const [timelineRows, setTimelineRows] = useState<Record<string, number | string>[]>([])
   const [timelineLabels, setTimelineLabels] = useState<
     { key: string; label: string; color: string }[]
@@ -73,7 +82,7 @@ export default function DashboardPage({ refreshTick }: { refreshTick: number }) 
   const keyParameter = selectedKey !== null && selectedKey.length > 0 ? selectedKey : null
   const windowHours = useMemo(() => proxyConfig?.windowHours ?? 5, [proxyConfig])
   const bucket: 'hour' | 'day' =
-    periodRange.toMilliseconds - periodRange.fromMilliseconds <= 2 * DAY ? 'hour' : 'day'
+    effectiveRange.toMilliseconds - effectiveRange.fromMilliseconds <= 2 * DAY ? 'hour' : 'day'
 
   useEffect(() => {
     api
@@ -181,8 +190,8 @@ export default function DashboardPage({ refreshTick }: { refreshTick: number }) 
 
   // таймлайн выбранного периода/среза + границы окон
   useEffect(() => {
-    const from = periodRange.fromMilliseconds
-    const to = periodRange.toMilliseconds
+    const from = effectiveRange.fromMilliseconds
+    const to = effectiveRange.toMilliseconds
     const timelineRequest =
       sliceMode === 'total'
         ? api
@@ -233,7 +242,7 @@ export default function DashboardPage({ refreshTick }: { refreshTick: number }) 
     } else {
       setProviderBoundaries([])
     }
-  }, [refreshTick, periodRange, bucket, sliceMode, selectedKey])
+  }, [refreshTick, effectiveRange, bucket, sliceMode, selectedKey])
 
   return (
     <div className="dashboard">
@@ -306,8 +315,8 @@ export default function DashboardPage({ refreshTick }: { refreshTick: number }) 
         bucket={bucket}
         boundaries={boundaries}
         providerWindows={providerBoundaries}
-        fromMilliseconds={periodRange.fromMilliseconds}
-        toMilliseconds={periodRange.toMilliseconds}
+        fromMilliseconds={effectiveRange.fromMilliseconds}
+        toMilliseconds={effectiveRange.toMilliseconds}
         keySelected={keyParameter !== ''}
       />
       <div className="tables-row">

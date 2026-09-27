@@ -532,23 +532,36 @@ class JdbcStatsService(
         // последние неудачные попытки (лента переключений)
         val recentFailures = ArrayList<StatsService.FailedAttempt>()
         jdbcTemplate.query(
-            """SELECT ts, model, provider, status, COALESCE(error, '') FROM usage_event
+            """SELECT id, ts, model, provider, status, COALESCE(error, '') FROM usage_event
                WHERE ts >= ? AND ts <= ? AND (status >= 400 OR error IS NOT NULL)$keyCondition
                ORDER BY id DESC LIMIT 10""",
             { resultSet ->
                 recentFailures.add(
                     StatsService.FailedAttempt(
-                        timestamp = resultSet.getLong(1),
-                        model = resultSet.getString(2),
-                        providerName = resultSet.getString(3),
-                        status = resultSet.getInt(4),
-                        error = resultSet.getString(5).take(160),
+                        id = resultSet.getLong(1),
+                        timestamp = resultSet.getLong(2),
+                        model = resultSet.getString(3),
+                        providerName = resultSet.getString(4),
+                        status = resultSet.getInt(5),
+                        error = resultSet.getString(6).take(160),
                     ),
                 )
             },
             *rangeArguments,
         )
         return StatsService.FallbackReport(providers, recentFailures)
+    }
+
+    override suspend fun errorDetail(eventId: Long): StatsService.ErrorDetail? = databaseProvider.execute {
+        val found = ArrayList<StatsService.ErrorDetail>()
+        jdbcTemplate.query(
+            "SELECT id, error_detail FROM usage_event WHERE id = ?",
+            { resultSet ->
+                found.add(StatsService.ErrorDetail(eventId = resultSet.getLong(1), detail = resultSet.getString(2)))
+            },
+            eventId,
+        )
+        found.firstOrNull()
     }
 
     private fun percentile(sortedValues: List<Long>, fraction: Double): Long {

@@ -173,12 +173,23 @@ interface StatsService {
 
     /** Неудачная попытка маршрута (для ленты переключений). */
     data class FailedAttempt(
+        val id: Long,
         val timestamp: Long,
         val model: String,
         val providerName: String,
         val status: Int,
         val error: String,
     )
+
+    /** Расшифровка найденного события; detail null, если событие записано без неё. */
+    data class ErrorDetail(val eventId: Long, val detail: String?)
+
+    /**
+     * Полная расшифровка одной ошибки маршрутизации (тело ответа провайдера
+     * или стектрейс) по идентификатору события из FailedAttempt.
+     * null — только если события с таким идентификатором нет.
+     */
+    suspend fun errorDetail(eventId: Long): ErrorDetail?
 
     data class FallbackReport(
         val providers: List<ProviderHealth>,

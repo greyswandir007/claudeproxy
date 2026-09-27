@@ -18,4 +18,11 @@ data class UsageEvent(
     val error: String?,
     /** Оценка токенов, сэкономленных инструментами экономии (обрезка и т.п.). */
     val savedTokens: Long = 0,
+
+    /**
+     * Полная расшифровка ошибки: тело ответа провайдера целиком или стектрейс
+     * (в отличие от error — без обрезки до 300 символов; ограничено сверху
+     * размером ProxyErrorDetails.MAX_DETAIL_LENGTH).
+     */
+    val errorDetail: String? = null,
 )

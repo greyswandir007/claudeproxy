@@ -7,6 +7,8 @@ export interface PeriodRange {
 interface Preset {
   id: string
   title: string
+  /** Скользящий пресет: правая граница привязана к текущему моменту. */
+  rolling: boolean
   range: () => PeriodRange
 }
 
@@ -22,11 +24,13 @@ const PRESETS: Preset[] = [
   {
     id: 'today',
     title: 'Сегодня',
+    rolling: true,
     range: () => ({ fromMilliseconds: dayStart(0), toMilliseconds: Date.now() }),
   },
   {
     id: 'yesterday',
     title: 'Вчера',
+    rolling: false,
     range: () => ({
       fromMilliseconds: dayStart(1),
       toMilliseconds: dayStart(1) + DAY - 1,
@@ -35,6 +39,7 @@ const PRESETS: Preset[] = [
   {
     id: 'dayBeforeYesterday',
     title: 'Позавчера',
+    rolling: false,
     range: () => ({
       fromMilliseconds: dayStart(2),
       toMilliseconds: dayStart(2) + DAY - 1,
@@ -43,11 +48,13 @@ const PRESETS: Preset[] = [
   {
     id: 'last7days',
     title: '7 дней',
+    rolling: true,
     range: () => ({ fromMilliseconds: Date.now() - 7 * DAY, toMilliseconds: Date.now() }),
   },
   {
     id: 'previousWeek',
     title: 'Прошлая неделя',
+    rolling: false,
     range: () => {
       const monday = new Date()
       monday.setHours(0, 0, 0, 0)
@@ -59,11 +66,13 @@ const PRESETS: Preset[] = [
   {
     id: 'last30days',
     title: '30 дней',
+    rolling: true,
     range: () => ({ fromMilliseconds: Date.now() - 30 * DAY, toMilliseconds: Date.now() }),
   },
   {
     id: 'previousMonth',
     title: 'Прошлый месяц',
+    rolling: false,
     range: () => {
       const now = new Date()
       const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).getTime()
@@ -71,6 +80,18 @@ const PRESETS: Preset[] = [
     },
   },
 ]
+
+/**
+ * Свежий диапазон скользящего пресета («сегодня», «7 дней», «30 дней»): правая
+ * граница пересчитывается к текущему моменту при каждом вызове. Для фиксированных
+ * пресетов и произвольного диапазона возвращает null.
+ */
+export function rollingPresetRange(presetId: string | null): PeriodRange | null {
+  if (presetId == null) return null
+  const preset = PRESETS.find((item) => item.id === presetId)
+  if (preset == null || !preset.rolling) return null
+  return preset.range()
+}
 
 export default function PeriodNavigator({
   selectedPreset,

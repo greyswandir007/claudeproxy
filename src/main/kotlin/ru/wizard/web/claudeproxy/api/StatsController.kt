@@ -2,6 +2,7 @@ package ru.wizard.web.claudeproxy.api
 
 import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.annotation.GetMapping
+import org.springframework.web.bind.annotation.PathVariable
 import org.springframework.web.bind.annotation.RequestParam
 import org.springframework.web.bind.annotation.RestController
 import ru.wizard.web.claudeproxy.config.ProxyProperties
@@ -113,6 +114,14 @@ class StatsController(
         @RequestParam(defaultValue = "7d") range: String,
         @RequestParam(name = "key", required = false) clientKey: String?,
     ): StatsService.FallbackReport = statsService.fallbackReport(range, clientKey)
+
+    /** Полная расшифровка одной ошибки маршрутизации по идентификатору события. */
+    @GetMapping("/api/stats/errors/{eventId}")
+    suspend fun errorDetail(@PathVariable eventId: Long): ResponseEntity<Map<String, Any?>> {
+        val errorDetail = statsService.errorDetail(eventId)
+            ?: return ResponseEntity.notFound().build()
+        return ResponseEntity.ok(mapOf("eventId" to errorDetail.eventId, "errorDetail" to errorDetail.detail))
+    }
 
     /** Тарификация провайдеров: цены (заданная + расчётная) и расход за 7/30 дней. */
     @GetMapping("/api/provider-costs")

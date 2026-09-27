@@ -21,6 +21,7 @@ import ru.wizard.web.claudeproxy.proxy.UsageAccumulator
 import ru.wizard.web.claudeproxy.proxy.UpstreamError
 import ru.wizard.web.claudeproxy.proxy.UpstreamRetryPolicy
 import ru.wizard.web.claudeproxy.proxy.ProviderRequestAdjuster
+import ru.wizard.web.claudeproxy.proxy.ProxyErrorDetails
 import ru.wizard.web.claudeproxy.proxy.TokenSavingAdjuster
 import ru.wizard.web.claudeproxy.proxy.cache.CachedResponsePresenter
 import ru.wizard.web.claudeproxy.proxy.cache.RequestCacheService
@@ -225,6 +226,7 @@ class WebClientOpenAiHandler(
                             startedAtMilliseconds = startedAtMilliseconds,
                             status = errorStatus(error),
                             error = shortError(error),
+                            errorDetail = ProxyErrorDetails.of(error),
                             savedTokens = 0,
                         ),
                     )
@@ -290,6 +292,7 @@ class WebClientOpenAiHandler(
                             startedAtMilliseconds = startedAtMilliseconds,
                             status = errorStatus(error),
                             error = shortError(error),
+                            errorDetail = ProxyErrorDetails.of(error),
                             savedTokens = 0,
                         ),
                     )
@@ -397,6 +400,7 @@ class WebClientOpenAiHandler(
         status: Int,
         error: String?,
         savedTokens: Long = 0,
+        errorDetail: String? = null,
     ) = UsageEvent(
         ts = System.currentTimeMillis(),
         clientKey = clientKey,
@@ -412,6 +416,7 @@ class WebClientOpenAiHandler(
         status = status,
         error = error,
         savedTokens = savedTokens,
+        errorDetail = errorDetail,
     )
 
     private fun serverSentEventErrorBytes(message: String?): ByteArray {
