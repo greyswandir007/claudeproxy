@@ -1,5 +1,6 @@
 package ru.wizard.web.claudeproxy.auth
 
+import io.github.oshai.kotlinlogging.KotlinLogging
 import org.springframework.http.HttpHeaders
 import org.springframework.http.HttpStatus
 import org.springframework.stereotype.Component
@@ -19,6 +20,7 @@ import java.util.Base64
  */
 @Component
 class BasicAuthWebFilter(proxyProperties: ProxyProperties) : WebFilter {
+    private val logger = KotlinLogging.logger {}
 
     private val expectedAuthorizationHeader: String? = run {
         val username = proxyProperties.dashboard.auth.username
@@ -42,6 +44,13 @@ class BasicAuthWebFilter(proxyProperties: ProxyProperties) : WebFilter {
         )
         if (authorized) {
             return chain.filter(exchange)
+        }
+        // сами учётные данные не логируем — только факт, путь и адрес клиента
+        val clientHost = exchange.request.remoteAddress?.address?.hostAddress ?: "unknown"
+        if (presentedHeader == null) {
+            logger.warn { "Dashboard authentication failed: credentials not presented (path=$path, client=$clientHost)" }
+        } else {
+            logger.warn { "Dashboard authentication failed: wrong credentials (path=$path, client=$clientHost)" }
         }
         val response = exchange.response
         response.statusCode = HttpStatus.UNAUTHORIZED

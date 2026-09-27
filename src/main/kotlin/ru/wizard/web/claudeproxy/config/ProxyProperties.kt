@@ -17,6 +17,7 @@ class ProxyProperties(
     var providers: List<Provider> = emptyList(),
     var dashboard: Dashboard = Dashboard(),
     var requestCache: RequestCache = RequestCache(),
+    var serverEvent: ServerEvent = ServerEvent(),
 ) {
     class Models(
         /** Белый список public-моделей; пусто = все модели всех провайдеров. */
@@ -40,6 +41,16 @@ class ProxyProperties(
     class RequestCache(
         /** Максимум строк в request_cache; лишние вытесняются по LRU. */
         var maxRows: Int = 1000,
+    )
+
+    /** Журнал событий сервера (страница «События»). */
+    class ServerEvent(
+        /** Ёмкость async-очереди записи; при переполнении события отбрасываются. */
+        var queueCapacity: Int = 1000,
+        /** Автоочистка server_event, дней (0 = не чистить). */
+        var retentionDays: Long = 14,
+        /** Минимальный уровень захвата логов в журнал: INFO | WARN | ERROR. */
+        var minLevel: String = "WARN",
     )
 
     class Provider(

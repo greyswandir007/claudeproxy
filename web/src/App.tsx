@@ -4,8 +4,9 @@ import DashboardPage from './pages/DashboardPage'
 import ExposurePage from './pages/ExposurePage'
 import KeysPage from './pages/KeysPage'
 import ModelsPage from './pages/ModelsPage'
+import ServerEventsPage from './pages/ServerEventsPage'
 
-type Page = 'dashboard' | 'keys' | 'models' | 'exposure' | 'chat'
+type Page = 'dashboard' | 'keys' | 'models' | 'exposure' | 'chat' | 'events'
 
 const REFRESH_INTERVAL_MILLISECONDS = 30_000
 
@@ -62,6 +63,12 @@ export default function App() {
           >
             Чат
           </button>
+          <button
+            className={page === 'events' ? 'tab tab-active' : 'tab'}
+            onClick={() => setPage('events')}
+          >
+            События
+          </button>
         </nav>
         <div className="app-refresh">
           <span className="muted">
@@ -78,6 +85,7 @@ export default function App() {
         {page === 'models' && <ModelsPage refreshTick={refreshTick} />}
         {page === 'exposure' && <ExposurePage refreshTick={refreshTick} />}
         {page === 'chat' && <ChatPage refreshTick={refreshTick} />}
+        {page === 'events' && <ServerEventsPage refreshTick={refreshTick} />}
       </main>
     </div>
   )

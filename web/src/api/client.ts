@@ -370,6 +370,16 @@ export interface RouteCooldown {
   reason: string
 }
 
+export interface ServerEventView {
+  id: number
+  timestamp: string
+  /** INFO | WARN | ERROR */
+  level: string
+  logger: string
+  message: string
+  stackTrace: string | null
+}
+
 export interface ProviderLimitUsage {
   providerName: string
   window: LimitPeriodUsage | null
@@ -474,4 +484,15 @@ export const api = {
   errorDetail: (eventId: number) => getJson<ErrorDetail>(`/api/stats/errors/${eventId}`),
   routeCooldowns: () => getJson<RouteCooldown[]>('/api/route-cooldowns'),
   providerCosts: () => getJson<ProviderCost[]>('/api/provider-costs'),
+  serverEvents: (params: { level?: string; loggerContains?: string; messageContains?: string; beforeId?: number; limit?: number } = {}) => {
+    const query = new URLSearchParams()
+    if (params.level) query.set('level', params.level)
+    if (params.loggerContains) query.set('loggerContains', params.loggerContains)
+    if (params.messageContains) query.set('messageContains', params.messageContains)
+    if (params.beforeId !== undefined) query.set('beforeId', String(params.beforeId))
+    if (params.limit !== undefined) query.set('limit', String(params.limit))
+    const suffix = Array.from(query.keys()).length > 0 ? `?${query.toString()}` : ''
+    return getJson<ServerEventView[]>(`/api/server-events${suffix}`)
+  },
+  clearServerEvents: () => deleteRequest('/api/server-events'),
 }

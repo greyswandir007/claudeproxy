@@ -1,5 +1,6 @@
 package ru.wizard.web.claudeproxy.auth
 
+import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.reactor.mono
 import org.springframework.http.HttpHeaders
 import org.springframework.http.HttpStatus
@@ -19,6 +20,7 @@ import ru.wizard.web.claudeproxy.proxy.openai.inbound.OpenAiCompatibilityErrors
  */
 @Component
 class ApiKeyAuthFilter(private val apiKeyService: ApiKeyService) : WebFilter {
+    private val logger = KotlinLogging.logger {}
 
     override fun filter(exchange: ServerWebExchange, chain: WebFilterChain): Mono<Void> {
         val path = exchange.request.path.value()
@@ -27,15 +29,23 @@ class ApiKeyAuthFilter(private val apiKeyService: ApiKeyService) : WebFilter {
         }
         // формат ошибки — по протоколу клиента: OpenAI для /v1/chat/completions
         val openAiFormat = OpenAiCompatibilityErrors.isInboundPath(path)
+        val clientHost = exchange.request.remoteAddress?.address?.hostAddress ?: "unknown"
         val presentedKey = extractKey(exchange.request)
-            ?: return writeError(
-                exchange,
-                openAiFormat,
-                "Отсутствует API-ключ: передайте x-api-key или Authorization: Bearer",
-            )
+            ?: run {
+                // сам ключ не логируем — только факт и адрес клиента
+                logger.warn { "Client authentication failed: API key not presented (path=$path, client=$clientHost)" }
+                return writeError(
+                    exchange,
+                    openAiFormat,
+                    "Отсутствует API-ключ: передайте x-api-key или Authorization: Bearer",
+                )
+            }
         return mono {
             apiKeyService.authenticate(presentedKey)
-                ?: throw ApiError(HttpStatus.UNAUTHORIZED, "authentication_error", "invalid x-api-key")
+                ?: run {
+                    logger.warn { "Client authentication failed: invalid API key (path=$path, client=$clientHost)" }
+                    throw ApiError(HttpStatus.UNAUTHORIZED, "authentication_error", "invalid x-api-key")
+                }
         }.flatMap { authorizedKey ->
             exchange.attributes[CLIENT_KEY_ATTRIBUTE] = authorizedKey.name
             exchange.attributes[AUTHORIZED_KEY_ATTRIBUTE] = authorizedKey
