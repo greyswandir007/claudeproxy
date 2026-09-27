@@ -136,6 +136,8 @@ class WebClientAnthropicHandler(
                     }
                     .toEntity(String::class.java)
                     .awaitSingle()
+                // не-стриминговый путь: ttft = upstream = момент получения ответа
+                val responseAtMilliseconds = System.currentTimeMillis()
                 if (recordUsage) {
                     val usageAccumulator = UsageAccumulator()
                     runCatching {
@@ -151,6 +153,8 @@ class WebClientAnthropicHandler(
                             usageAccumulator = usageAccumulator,
                             startedAtMilliseconds = startedAtMilliseconds,
                             status = responseEntity.statusCode.value(),
+                            firstChunkAtMilliseconds = responseAtMilliseconds,
+                            upstreamEndedAtMilliseconds = responseAtMilliseconds,
                             error = if (!responseEntity.statusCode.is2xxSuccessful()) {
                                 "HTTP ${responseEntity.statusCode.value()}: " +
                                     "${(responseEntity.body ?: "").take(300)}"
@@ -187,6 +191,7 @@ class WebClientAnthropicHandler(
                 return buildClientResponse(exchange, responseEntity)
             } catch (error: Throwable) {
                 if (recordUsage) {
+                    val failedAtMilliseconds = System.currentTimeMillis()
                     usageRecorder.recordAsync(
                         usageEvent(
                             clientKey = clientKey,
@@ -198,6 +203,8 @@ class WebClientAnthropicHandler(
                             error = shortError(error),
                             errorDetail = ProxyErrorDetails.of(error),
                             savedTokens = 0,
+                            firstChunkAtMilliseconds = failedAtMilliseconds,
+                            upstreamEndedAtMilliseconds = failedAtMilliseconds,
                         ),
                     )
                 }
@@ -235,6 +242,8 @@ class WebClientAnthropicHandler(
         val startedAtMilliseconds = System.currentTimeMillis()
         val usageSniffer = SseUsageSniffer(objectMapper)
         var emittedAnything = false
+        // Момент первого чанка от провайдера (0 — чанков не было) для ttft.
+        var firstChunkAtMilliseconds: Long = 0
         // Накопление полного SSE-транскрипта для кэша повторов (null — не кэшируем).
         val transcript = StringBuilder()
         val (callSpecification, savedTokens) =
@@ -247,6 +256,9 @@ class WebClientAnthropicHandler(
             .bodyToFlux(DataBuffer::class.java)
             .doOnNext { buffer ->
                 emittedAnything = true
+                if (firstChunkAtMilliseconds == 0L) {
+                    firstChunkAtMilliseconds = System.currentTimeMillis()
+                }
                 // peek без потребления: readPosition не двигается
                 val chunkText = buffer.toString(buffer.readPosition(), buffer.readableByteCount(), UTF_8)
                 usageSniffer.onChunk(chunkText)
@@ -254,6 +266,7 @@ class WebClientAnthropicHandler(
             }
             .doOnError { error ->
                 if (recordUsage) {
+                    val failedAtMilliseconds = System.currentTimeMillis()
                     usageRecorder.recordAsync(
                         usageEvent(
                             clientKey = clientKey,
@@ -265,6 +278,8 @@ class WebClientAnthropicHandler(
                             error = shortError(error),
                             errorDetail = ProxyErrorDetails.of(error),
                             savedTokens = 0,
+                            firstChunkAtMilliseconds = firstChunkAtMilliseconds.takeIf { it > 0 },
+                            upstreamEndedAtMilliseconds = failedAtMilliseconds,
                         ),
                     )
                 }
@@ -274,6 +289,7 @@ class WebClientAnthropicHandler(
                     routeCircuitBreaker.success(route.provider.name)
                 }
                 if (recordUsage && signal != SignalType.ON_ERROR) {
+                    val upstreamEndedAtMilliseconds = System.currentTimeMillis()
                     usageRecorder.recordAsync(
                         usageEvent(
                             clientKey = clientKey,
@@ -283,7 +299,9 @@ class WebClientAnthropicHandler(
                             startedAtMilliseconds = startedAtMilliseconds,
                             status = signalStatus(signal),
                             error = null,
-                       savedTokens = savedTokens,
+                            savedTokens = savedTokens,
+                            firstChunkAtMilliseconds = firstChunkAtMilliseconds.takeIf { it > 0 },
+                            upstreamEndedAtMilliseconds = upstreamEndedAtMilliseconds,
                         ),
                     )
                 }
@@ -428,6 +446,9 @@ class WebClientAnthropicHandler(
         error: String?,
         savedTokens: Long = 0,
         errorDetail: String? = null,
+        // метки латентности: момент первого чанка и конца ответа провайдера
+        firstChunkAtMilliseconds: Long? = null,
+        upstreamEndedAtMilliseconds: Long? = null,
     ) = UsageEvent(
         ts = System.currentTimeMillis(),
         clientKey = clientKey,
@@ -444,6 +465,9 @@ class WebClientAnthropicHandler(
         error = error,
         savedTokens = savedTokens,
         errorDetail = errorDetail,
+        ttftMilliseconds = firstChunkAtMilliseconds?.let { (it - startedAtMilliseconds).coerceAtLeast(0) },
+        upstreamDurationMilliseconds = upstreamEndedAtMilliseconds
+            ?.let { (it - startedAtMilliseconds).coerceAtLeast(0) },
     )
 
     private fun serverSentEventErrorBytes(message: String?): ByteArray {

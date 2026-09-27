@@ -149,6 +149,47 @@ class ProxyIntegrationTest {
     }
 
     @Test
+    fun `латентность - ttft и длительность провайдера записываются`() {
+        val testStartedAtMilliseconds = System.currentTimeMillis()
+
+        // не-стрим: ttft = upstream = момент получения полного ответа
+        webTestClient.post().uri("/v1/messages")
+            .header("x-api-key", SEED_API_KEY)
+            .contentType(MediaType.APPLICATION_JSON)
+            .bodyValue("""{"model":"fake-model","max_tokens":100,"messages":[{"role":"user","content":"латентность-нестрим"}]}""")
+            .exchange().expectStatus().isOk
+
+        val nonStreamRow = awaitUsageEventRow(
+            "ts >= $testStartedAtMilliseconds AND provider = 'fake' AND stream = 0",
+        )
+        val nonStreamTimeToFirstChunk = asLong(nonStreamRow["ttft_milliseconds"])
+        val nonStreamUpstreamDuration = asLong(nonStreamRow["upstream_duration_milliseconds"])
+        val nonStreamDuration = asLong(nonStreamRow["duration_ms"])
+        assertTrue(nonStreamTimeToFirstChunk >= 0, "non-stream ttft must be recorded, got $nonStreamTimeToFirstChunk")
+        assertTrue(nonStreamUpstreamDuration >= nonStreamTimeToFirstChunk, "upstream >= ttft expected")
+        assertTrue(nonStreamDuration >= nonStreamUpstreamDuration, "duration >= upstream expected")
+
+        // стрим: ttft = момент первого чанка, не позже конца стрима
+        webTestClient.post().uri("/v1/messages")
+            .header("x-api-key", SEED_API_KEY)
+            .contentType(MediaType.APPLICATION_JSON)
+            .bodyValue("""{"model":"fake-model","max_tokens":100,"stream":true,"messages":[{"role":"user","content":"латентность-стрим"}]}""")
+            .exchange().expectStatus().isOk
+            .expectHeader().contentTypeCompatibleWith(MediaType.TEXT_EVENT_STREAM)
+            .expectBody(String::class.java).returnResult().responseBody!!
+
+        val streamRow = awaitUsageEventRow(
+            "ts >= $testStartedAtMilliseconds AND provider = 'fake' AND stream = 1",
+        )
+        val streamTimeToFirstChunk = asLong(streamRow["ttft_milliseconds"])
+        val streamUpstreamDuration = asLong(streamRow["upstream_duration_milliseconds"])
+        val streamDuration = asLong(streamRow["duration_ms"])
+        assertTrue(streamTimeToFirstChunk >= 0, "stream ttft must be recorded, got $streamTimeToFirstChunk")
+        assertTrue(streamUpstreamDuration >= streamTimeToFirstChunk, "upstream >= ttft expected")
+        assertTrue(streamDuration >= streamUpstreamDuration, "duration >= upstream expected")
+    }
+
+    @Test
     fun `повтор не-stream запроса отдаётся из кэша бесплатно`() {
         val body =
             """{"model":"fake-model","max_tokens":100,"messages":[{"role":"user","content":"кэш-повтор"}]}"""

@@ -7,6 +7,7 @@ import ru.wizard.web.claudeproxy.db.DatabaseProvider
 import ru.wizard.web.claudeproxy.proxy.ApiError
 import ru.wizard.web.claudeproxy.proxy.cache.RequestCacheService
 import ru.wizard.web.claudeproxy.usage.StatsService
+import java.sql.ResultSet
 import java.time.LocalDate
 import java.time.ZoneId
 
@@ -265,6 +266,87 @@ class JdbcStatsService(
                 *queryArguments(from, to, clientKey),
             )
         }
+
+    /** Строка латентности одного события (метрики провайдера могут быть null). */
+    private data class LatencyRow(
+        val bucketStartMilliseconds: Long,
+        val timeToFirstChunkMilliseconds: Long?,
+        val upstreamDurationMilliseconds: Long?,
+        val durationMilliseconds: Long?,
+    )
+
+    override suspend fun latencyStatistics(
+        bucket: String,
+        fromMilliseconds: Long?,
+        toMilliseconds: Long?,
+    ): StatsService.LatencyStatistics =
+        databaseProvider.execute {
+            val bucketMilliseconds = when (bucket) {
+                "hour" -> 3_600_000L
+                "day" -> 86_400_000L
+                else -> throw ApiError(
+                    HttpStatus.BAD_REQUEST,
+                    "invalid_request_error",
+                    "bucket: ожидается hour или day",
+                )
+            }
+            val to = toMilliseconds ?: System.currentTimeMillis()
+            val defaultBucketCount = if (bucket == "hour") 7 * 24 else 30
+            val from = fromMilliseconds ?: to - defaultBucketCount * bucketMilliseconds
+            // только завершённые 2xx-попытки: в ошибочных латентность не показательна
+            val rows = jdbcTemplate.query(
+                """SELECT (ts / $bucketMilliseconds) * $bucketMilliseconds,
+                          ttft_milliseconds, upstream_duration_milliseconds, duration_ms
+                   FROM usage_event
+                   WHERE ts >= ? AND ts <= ? AND status BETWEEN 200 AND 299""",
+                { resultSet, _ ->
+                    LatencyRow(
+                        bucketStartMilliseconds = resultSet.getLong(1),
+                        timeToFirstChunkMilliseconds = nullableLong(resultSet, 2),
+                        upstreamDurationMilliseconds = nullableLong(resultSet, 3),
+                        durationMilliseconds = nullableLong(resultSet, 4),
+                    )
+                },
+                from,
+                to,
+            )
+            val groupedRows = rows.groupBy { it.bucketStartMilliseconds }.toSortedMap()
+            val points = groupedRows.map { (bucketStartMilliseconds, bucketRows) ->
+                StatsService.LatencyPoint(
+                    bucketStartMilliseconds = bucketStartMilliseconds,
+                    ttftMeanMilliseconds = bucketRows.mapNotNull { it.timeToFirstChunkMilliseconds }.averageOrNull(),
+                    ttftPercentile95Milliseconds = percentileOf(bucketRows.mapNotNull { it.timeToFirstChunkMilliseconds }, 0.95),
+                    upstreamMeanMilliseconds = bucketRows.mapNotNull { it.upstreamDurationMilliseconds }.averageOrNull(),
+                    upstreamPercentile95Milliseconds = percentileOf(bucketRows.mapNotNull { it.upstreamDurationMilliseconds }, 0.95),
+                    durationMeanMilliseconds = bucketRows.mapNotNull { it.durationMilliseconds }.averageOrNull(),
+                    durationPercentile95Milliseconds = percentileOf(bucketRows.mapNotNull { it.durationMilliseconds }, 0.95),
+                    requests = bucketRows.size.toLong(),
+                )
+            }
+            StatsService.LatencyStatistics(
+                points = points,
+                ttftMeanMilliseconds = rows.mapNotNull { it.timeToFirstChunkMilliseconds }.averageOrNull(),
+                ttftPercentile95Milliseconds = percentileOf(rows.mapNotNull { it.timeToFirstChunkMilliseconds }, 0.95),
+                upstreamMeanMilliseconds = rows.mapNotNull { it.upstreamDurationMilliseconds }.averageOrNull(),
+                upstreamPercentile95Milliseconds = percentileOf(rows.mapNotNull { it.upstreamDurationMilliseconds }, 0.95),
+                durationMeanMilliseconds = rows.mapNotNull { it.durationMilliseconds }.averageOrNull(),
+                durationPercentile95Milliseconds = percentileOf(rows.mapNotNull { it.durationMilliseconds }, 0.95),
+                requests = rows.size.toLong(),
+            )
+        }
+
+    /** Long по индексу колонки с учётом NULL. */
+    private fun nullableLong(resultSet: ResultSet, columnIndex: Int): Long? {
+        val value = resultSet.getLong(columnIndex)
+        return if (resultSet.wasNull()) null else value
+    }
+
+    /** p95-подобный перцентиль: percentile существующего helper'а + null для пустого списка. */
+    private fun percentileOf(values: List<Long>, fraction: Double): Double? =
+        if (values.isEmpty()) null else percentile(values.sorted(), fraction).toDouble()
+
+    /** Среднее списка или null, если он пуст. */
+    private fun List<Long>.averageOrNull(): Double? = if (isEmpty()) null else average()
 
     /** Эффективный лимит категории: задан или выведен из другой (приоритет месяц → неделя → окно). */
     private data class EffectiveLimit(val tokens: Long, val derived: Boolean)

@@ -1288,3 +1288,39 @@ th.numeric {
 .event-clear {
   margin-left: auto;
 }
+
+/* ===== Блок «Латентность» на дашборде ===== */
+
+.latency-section {
+  margin-top: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.latency-tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 12px;
+}
+
+.latency-tile {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 12px;
+}
+
+.latency-tile-caption {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.latency-tile-value {
+  font-size: 20px;
+  font-weight: 700;
+}
+
+.latency-chart {
+  width: 100%;
+}

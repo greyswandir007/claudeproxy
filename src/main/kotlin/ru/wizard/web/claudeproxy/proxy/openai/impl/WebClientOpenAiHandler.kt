@@ -156,6 +156,8 @@ class WebClientOpenAiHandler(
                     }
                     .toEntity(String::class.java)
                     .awaitSingle()
+                // не-стриминговый путь: ttft = upstream = момент получения ответа
+                val responseAtMilliseconds = System.currentTimeMillis()
                 if (recordUsage) {
                     val translated = responseTranslator.translate(
                         responseEntity.body,
@@ -175,6 +177,8 @@ class WebClientOpenAiHandler(
                                 null
                             },
                             savedTokens = savedTokens,
+                            firstChunkAtMilliseconds = responseAtMilliseconds,
+                            upstreamEndedAtMilliseconds = responseAtMilliseconds,
                         ),
                     )
                     routeCircuitBreaker.success(route.provider.name)
@@ -217,6 +221,7 @@ class WebClientOpenAiHandler(
                     )
             } catch (error: Throwable) {
                 if (recordUsage) {
+                    val failedAtMilliseconds = System.currentTimeMillis()
                     usageRecorder.recordAsync(
                         usageEvent(
                             clientKey = clientKey,
@@ -228,6 +233,8 @@ class WebClientOpenAiHandler(
                             error = shortError(error),
                             errorDetail = ProxyErrorDetails.of(error),
                             savedTokens = 0,
+                            firstChunkAtMilliseconds = failedAtMilliseconds,
+                            upstreamEndedAtMilliseconds = failedAtMilliseconds,
                         ),
                     )
                 }
@@ -264,6 +271,8 @@ class WebClientOpenAiHandler(
         val startedAtMilliseconds = System.currentTimeMillis()
         val sseTranslator = OpenAiSseTranslator(objectMapper, route.mapping.publicName)
         var emittedAnything = false
+        // Момент первого события от провайдера (0 — событий не было) для ttft.
+        var firstChunkAtMilliseconds: Long = 0
         // Накопление полного SSE-транскрипта для кэша повторов (null — не кэшируем).
         val transcript = ArrayList<String>()
         val (callSpecification, savedTokens) = buildCall(route, requestRoot, bearerToken)
@@ -277,12 +286,16 @@ class WebClientOpenAiHandler(
                 val events = sseTranslator.onData(serverSentEvent.data())
                 if (events.isNotEmpty()) {
                     emittedAnything = true
+                    if (firstChunkAtMilliseconds == 0L) {
+                        firstChunkAtMilliseconds = System.currentTimeMillis()
+                    }
                 }
                 if (cacheKey != null) transcript.addAll(events)
                 Flux.fromIterable(events)
             }
             .doOnError { error ->
                 if (recordUsage) {
+                    val failedAtMilliseconds = System.currentTimeMillis()
                     usageRecorder.recordAsync(
                         usageEvent(
                             clientKey = clientKey,
@@ -294,6 +307,8 @@ class WebClientOpenAiHandler(
                             error = shortError(error),
                             errorDetail = ProxyErrorDetails.of(error),
                             savedTokens = 0,
+                            firstChunkAtMilliseconds = firstChunkAtMilliseconds.takeIf { it > 0 },
+                            upstreamEndedAtMilliseconds = failedAtMilliseconds,
                         ),
                     )
                 }
@@ -303,6 +318,7 @@ class WebClientOpenAiHandler(
                     routeCircuitBreaker.success(route.provider.name)
                 }
                 if (recordUsage && signal != SignalType.ON_ERROR) {
+                    val upstreamEndedAtMilliseconds = System.currentTimeMillis()
                     usageRecorder.recordAsync(
                         usageEvent(
                             clientKey = clientKey,
@@ -312,7 +328,9 @@ class WebClientOpenAiHandler(
                             startedAtMilliseconds = startedAtMilliseconds,
                             status = signalStatus(signal),
                             error = null,
-                       savedTokens = savedTokens,
+                            savedTokens = savedTokens,
+                            firstChunkAtMilliseconds = firstChunkAtMilliseconds.takeIf { it > 0 },
+                            upstreamEndedAtMilliseconds = upstreamEndedAtMilliseconds,
                         ),
                     )
                 }
@@ -401,6 +419,9 @@ class WebClientOpenAiHandler(
         error: String?,
         savedTokens: Long = 0,
         errorDetail: String? = null,
+        // метки латентности: момент первого чанка и конца ответа провайдера
+        firstChunkAtMilliseconds: Long? = null,
+        upstreamEndedAtMilliseconds: Long? = null,
     ) = UsageEvent(
         ts = System.currentTimeMillis(),
         clientKey = clientKey,
@@ -417,6 +438,9 @@ class WebClientOpenAiHandler(
         error = error,
         savedTokens = savedTokens,
         errorDetail = errorDetail,
+        ttftMilliseconds = firstChunkAtMilliseconds?.let { (it - startedAtMilliseconds).coerceAtLeast(0) },
+        upstreamDurationMilliseconds = upstreamEndedAtMilliseconds
+            ?.let { (it - startedAtMilliseconds).coerceAtLeast(0) },
     )
 
     private fun serverSentEventErrorBytes(message: String?): ByteArray {

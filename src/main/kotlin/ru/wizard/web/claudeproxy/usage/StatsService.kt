@@ -91,6 +91,33 @@ interface StatsService {
         clientKey: String?,
     ): List<TimelinePoint>
 
+    /** Метрики латентности за бакет (по завершённым 2xx-запросам к провайдерам). */
+    data class LatencyPoint(
+        val bucketStartMilliseconds: Long,
+        val ttftMeanMilliseconds: Double?,
+        val ttftPercentile95Milliseconds: Double?,
+        val upstreamMeanMilliseconds: Double?,
+        val upstreamPercentile95Milliseconds: Double?,
+        val durationMeanMilliseconds: Double?,
+        val durationPercentile95Milliseconds: Double?,
+        val requests: Long,
+    )
+
+    /** Латентность по всему диапазону (среднее и p95 трёх метрик) + поинты по бакетам. */
+    data class LatencyStatistics(
+        val points: List<LatencyPoint>,
+        val ttftMeanMilliseconds: Double?,
+        val ttftPercentile95Milliseconds: Double?,
+        val upstreamMeanMilliseconds: Double?,
+        val upstreamPercentile95Milliseconds: Double?,
+        val durationMeanMilliseconds: Double?,
+        val durationPercentile95Milliseconds: Double?,
+        val requests: Long,
+    )
+
+    /** Латентность (ttft / длительность провайдера / полное время) по бакетам hour|day. */
+    suspend fun latencyStatistics(bucket: String, fromMilliseconds: Long?, toMilliseconds: Long?): LatencyStatistics
+
     /** Точка срез-таймлайна: токены сущности (модель/провайдер) в бакете. */
     data class GroupedTimelinePoint(
         val bucketStartMilliseconds: Long,

@@ -5,6 +5,7 @@ import {
   type FallbackReport,
   type GroupedTimelinePoint,
   type GroupedUsage,
+  type LatencyStatisticsView,
   type ProviderCost,
   type ProviderLimitUsage,
   type ProviderWindowSummary,
@@ -19,6 +20,7 @@ import {
 import PeriodNavigator, { rollingPresetRange, type PeriodRange } from '../components/PeriodNavigator'
 import PeriodCard from '../components/PeriodCard'
 import CostSection from '../components/CostSection'
+import LatencyChart from '../components/LatencyChart'
 import ProviderLimitBars from '../components/ProviderLimitBars'
 import RoutingHealth from '../components/RoutingHealth'
 import TimelineChart, { TOTAL_SERIES, pivotGroupedTimeline } from '../components/TimelineChart'
@@ -49,6 +51,7 @@ export default function DashboardPage({ refreshTick }: { refreshTick: number }) 
   const [fallbackReport, setFallbackReport] = useState<FallbackReport | null>(null)
   const [routeCooldowns, setRouteCooldowns] = useState<RouteCooldown[]>([])
   const [providerCosts, setProviderCosts] = useState<ProviderCost[]>([])
+  const [latencyStatistics, setLatencyStatistics] = useState<LatencyStatisticsView | null>(null)
 
   // навигация по периодам
   const [selectedPreset, setSelectedPreset] = useState('last7days')
@@ -242,6 +245,10 @@ export default function DashboardPage({ refreshTick }: { refreshTick: number }) 
     } else {
       setProviderBoundaries([])
     }
+    api
+      .latency(bucket, from, to)
+      .then(setLatencyStatistics)
+      .catch(() => setLatencyStatistics(null))
   }, [refreshTick, effectiveRange, bucket, sliceMode, selectedKey])
 
   return (
@@ -318,6 +325,33 @@ export default function DashboardPage({ refreshTick }: { refreshTick: number }) 
         toMilliseconds={effectiveRange.toMilliseconds}
         keySelected={keyParameter !== ''}
       />
+      {latencyStatistics && latencyStatistics.requests > 0 && (
+        <div className="latency-section">
+          <div className="latency-tiles">
+            <div className="latency-tile">
+              <div className="latency-tile-caption">время до первого токена</div>
+              <div className="latency-tile-value">{formatLatency(latencyStatistics.ttftMeanMilliseconds)}</div>
+              <div className="muted">p95 {formatLatency(latencyStatistics.ttftPercentile95Milliseconds)}</div>
+            </div>
+            <div className="latency-tile">
+              <div className="latency-tile-caption">ответ провайдера</div>
+              <div className="latency-tile-value">{formatLatency(latencyStatistics.upstreamMeanMilliseconds)}</div>
+              <div className="muted">p95 {formatLatency(latencyStatistics.upstreamPercentile95Milliseconds)}</div>
+            </div>
+            <div className="latency-tile">
+              <div className="latency-tile-caption">полный ответ клиенту</div>
+              <div className="latency-tile-value">{formatLatency(latencyStatistics.durationMeanMilliseconds)}</div>
+              <div className="muted">p95 {formatLatency(latencyStatistics.durationPercentile95Milliseconds)}</div>
+            </div>
+            <div className="latency-tile">
+              <div className="latency-tile-caption">запросов в периоде</div>
+              <div className="latency-tile-value">{latencyStatistics.requests}</div>
+              <div className="muted">2xx, включая кэш</div>
+            </div>
+          </div>
+          <LatencyChart points={latencyStatistics.points} isHourly={bucket === 'hour'} />
+        </div>
+      )}
       <div className="tables-row">
         <UsageTable
           title="По моделям"
@@ -406,4 +440,13 @@ function formatBucketLabel(bucketStart: number, bucket: 'hour' | 'day'): string 
   return bucket === 'hour'
     ? new Date(bucketStart).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })
     : new Date(bucketStart).toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' })
+}
+
+function formatLatency(milliseconds: number | null): string {
+  if (milliseconds === null || milliseconds === undefined) return '—'
+  if (milliseconds >= 1000) {
+    const seconds = Math.round(milliseconds / 100) / 10
+    return `${seconds.toLocaleString('ru-RU')} с`
+  }
+  return `${Math.round(milliseconds)} мс`
 }

@@ -86,6 +86,14 @@ class StatsController(
             statsService.groupedTimeline(bucket, fromMilliseconds, toMilliseconds, clientKey, group)
         }
 
+    /** Латентность запросов (ttft / провайдер / полный ответ) по бакетам и в среднем. */
+    @GetMapping("/api/latency")
+    suspend fun latency(
+        @RequestParam(defaultValue = "hour") bucket: String,
+        @RequestParam(name = "from", required = false) fromMilliseconds: Long?,
+        @RequestParam(name = "to", required = false) toMilliseconds: Long?,
+    ): StatsService.LatencyStatistics = statsService.latencyStatistics(bucket, fromMilliseconds, toMilliseconds)
+
     /** Границы 5-часовых окон ключа в диапазоне — отметки на графике дня. */
     @GetMapping("/api/window-boundaries")
     suspend fun windowBoundaries(

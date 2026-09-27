@@ -370,6 +370,28 @@ export interface RouteCooldown {
   reason: string
 }
 
+export interface LatencyPointView {
+  bucketStartMilliseconds: number
+  ttftMeanMilliseconds: number | null
+  ttftPercentile95Milliseconds: number | null
+  upstreamMeanMilliseconds: number | null
+  upstreamPercentile95Milliseconds: number | null
+  durationMeanMilliseconds: number | null
+  durationPercentile95Milliseconds: number | null
+  requests: number
+}
+
+export interface LatencyStatisticsView {
+  points: LatencyPointView[]
+  ttftMeanMilliseconds: number | null
+  ttftPercentile95Milliseconds: number | null
+  upstreamMeanMilliseconds: number | null
+  upstreamPercentile95Milliseconds: number | null
+  durationMeanMilliseconds: number | null
+  durationPercentile95Milliseconds: number | null
+  requests: number
+}
+
 export interface ServerEventView {
   id: number
   timestamp: string
@@ -427,6 +449,8 @@ export const api = {
       `/api/timeline?bucket=${bucket}&from=${from}&to=${to}` +
         `${key ? `&key=${encodeURIComponent(key)}` : ''}`,
     ),
+  latency: (bucket: 'hour' | 'day', from: number, to: number) =>
+    getJson<LatencyStatisticsView>(`/api/latency?bucket=${bucket}&from=${from}&to=${to}`),
   groupedTimeline: (
     bucket: 'hour' | 'day',
     key: string | null,
