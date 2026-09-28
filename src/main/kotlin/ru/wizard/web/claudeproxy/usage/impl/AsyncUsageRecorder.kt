@@ -31,8 +31,12 @@ class AsyncUsageRecorder(
             try {
                 databaseProvider.execute {
                     windowService.ensureWindow(usageEvent.clientKey, usageEvent.ts)
-                    // Повторы из кэша не создают окно псевдо-провайдера 'cache'.
-                    if (usageEvent.provider != RequestCacheService.CACHE_PROVIDER_NAME) {
+                    // Повторы из кэша не создают окно псевдо-провайдера 'cache';
+                    // окна выработки — только провайдерам хотя бы с одним лимитом (M18),
+                    // треки безлимитных провайдеров графу и карточке окон не нужны.
+                    if (usageEvent.provider != RequestCacheService.CACHE_PROVIDER_NAME &&
+                        providerHasLimits(usageEvent.provider)
+                    ) {
                         windowService.ensureProviderWindow(usageEvent.provider, usageEvent.ts)
                     }
                     jdbcTemplate.update(
@@ -68,4 +72,17 @@ class AsyncUsageRecorder(
             }
         }
     }
+
+    /** Есть ли у провайдера хотя бы один лимит (окно/неделя/месяц). NULL читается как 0. */
+    private fun providerHasLimits(providerName: String): Boolean =
+        jdbcTemplate.query(
+            """SELECT limit_window_tokens, limit_week_tokens, limit_month_tokens
+               FROM provider WHERE name = ?""",
+            { resultSet, _ ->
+                resultSet.getLong("limit_window_tokens") > 0 ||
+                    resultSet.getLong("limit_week_tokens") > 0 ||
+                    resultSet.getLong("limit_month_tokens") > 0
+            },
+            providerName,
+        ).firstOrNull() == true
 }

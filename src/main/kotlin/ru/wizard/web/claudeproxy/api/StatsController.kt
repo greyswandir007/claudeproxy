@@ -19,6 +19,7 @@ class StatsController(
     private val modelRegistry: ModelRegistry,
     private val proxyProperties: ProxyProperties,
     private val routeCircuitBreaker: ru.wizard.web.claudeproxy.routing.RouteCircuitBreaker,
+    private val requestCacheService: ru.wizard.web.claudeproxy.proxy.cache.RequestCacheService,
 ) {
 
     @GetMapping("/api/summary")
@@ -139,6 +140,11 @@ class StatsController(
     @GetMapping("/api/route-cooldowns")
     fun routeCooldowns(): List<ru.wizard.web.claudeproxy.routing.RouteCircuitBreaker.CooldownState> =
         routeCircuitBreaker.activeCooldowns()
+
+    /** Диагностика кэша повторов: lookups/hits/misses и причины промаха (с момента старта). */
+    @GetMapping("/api/request-cache-stats")
+    fun requestCacheStats(): ru.wizard.web.claudeproxy.proxy.cache.RequestCacheService.RequestCacheDiagnostics =
+        requestCacheService.diagnostics()
 
     /** Провайдеры и модели из реестра (read-only, без ключей провайдеров). */
     @GetMapping("/api/config")

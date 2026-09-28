@@ -11,6 +11,7 @@ import {
   type ProviderWindowSummary,
   type ProxyConfig,
   type RangeSummary,
+  type RequestCacheStats,
   type RouteCooldown,
   type TimelinePoint,
   type WindowBoundary,
@@ -23,6 +24,7 @@ import CostSection from '../components/CostSection'
 import LatencyChart from '../components/LatencyChart'
 import ProviderLimitBars from '../components/ProviderLimitBars'
 import RoutingHealth from '../components/RoutingHealth'
+import RequestCacheCard from '../components/RequestCacheCard'
 import TimelineChart, { TOTAL_SERIES, pivotGroupedTimeline } from '../components/TimelineChart'
 import UsageTable from '../components/UsageTable'
 import WindowCard from '../components/WindowCard'
@@ -50,6 +52,7 @@ export default function DashboardPage({ refreshTick }: { refreshTick: number }) 
   const [windowProviders, setWindowProviders] = useState<GroupedUsage[]>([])
   const [fallbackReport, setFallbackReport] = useState<FallbackReport | null>(null)
   const [routeCooldowns, setRouteCooldowns] = useState<RouteCooldown[]>([])
+  const [requestCacheStats, setRequestCacheStats] = useState<RequestCacheStats | null>(null)
   const [providerCosts, setProviderCosts] = useState<ProviderCost[]>([])
   const [latencyStatistics, setLatencyStatistics] = useState<LatencyStatisticsView | null>(null)
 
@@ -119,6 +122,10 @@ export default function DashboardPage({ refreshTick }: { refreshTick: number }) 
       .routeCooldowns()
       .then(setRouteCooldowns)
       .catch(() => setRouteCooldowns([]))
+    api
+      .requestCacheStats()
+      .then(setRequestCacheStats)
+      .catch(() => setRequestCacheStats(null))
     api
       .providerWindowHistory()
       .then(setProviderWindows)
@@ -367,6 +374,7 @@ export default function DashboardPage({ refreshTick }: { refreshTick: number }) 
         />
       </div>
       <RoutingHealth report={fallbackReport} cooldowns={routeCooldowns} />
+      <RequestCacheCard stats={requestCacheStats} />
       <CostSection providerCosts={providerCosts} />
       {providerLimits.length > 0 && (
         <section className="card dashboard-limits">

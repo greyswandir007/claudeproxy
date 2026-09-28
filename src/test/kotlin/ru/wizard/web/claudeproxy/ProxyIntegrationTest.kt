@@ -266,6 +266,149 @@ class ProxyIntegrationTest {
     }
 
     @Test
+    fun `диагностика кэша считает lookups hits и промахи с причинами`() {
+        fun cacheStats() = objectMapper.readTree(
+            webTestClient.get().uri("/api/request-cache-stats")
+                .exchange().expectStatus().isOk
+                .expectBody(String::class.java).returnResult().responseBody!!,
+        )
+        // счётчики живут с момента старта контекста, поэтому проверяем дельты
+        val before = cacheStats()
+
+        // запись в кэш асинхронна: ждём, пока счётчик доберётся до значения
+        fun awaitCacheCounter(field: String, expectedValue: Long) {
+            val deadline = System.currentTimeMillis() + 10_000
+            while (System.currentTimeMillis() < deadline) {
+                if (cacheStats().path(field).asLong() >= expectedValue) return
+                Thread.sleep(100)
+            }
+            throw AssertionError("request-cache counter '$field' did not reach $expectedValue")
+        }
+
+        fun postMessages(content: String) {
+            webTestClient.post().uri("/v1/messages")
+                .header("x-api-key", SEED_API_KEY)
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(
+                    """{"model":"fake-model","max_tokens":100,
+                        "messages":[{"role":"user","content":"$content"}]}""",
+                )
+                .exchange().expectStatus().isOk
+        }
+
+        // первый проход: промах «нет записи», ответ пишется в кэш
+        postMessages("диагностика кэша — первый")
+        awaitUsageEventRow("provider = 'fake' AND stream = 0")
+        awaitRequestCacheRow("model = 'fake-model'")
+        awaitCacheCounter("stored", before.path("stored").asLong() + 1)
+        val afterFirst = cacheStats()
+
+        // точный повтор: попадание
+        postMessages("диагностика кэша — первый")
+        awaitUsageEventRow("provider = 'cache' AND stream = 0")
+        val afterSecond = cacheStats()
+
+        // другой запрос: снова промах «нет записи»
+        postMessages("диагностика кэша — второй")
+        awaitUsageEventRows("provider = 'fake' AND stream = 0", 2)
+        awaitCacheCounter("stored", before.path("stored").asLong() + 2)
+        val afterThird = cacheStats()
+
+        // срок записи вышел: повтор — промах «запись истекла»
+        jdbcTemplate.update(
+            "UPDATE request_cache SET expires_at = ? WHERE model = 'fake-model'",
+            System.currentTimeMillis() - 1,
+        )
+        postMessages("диагностика кэша — первый")
+        awaitUsageEventRows("provider = 'fake' AND stream = 0", 3)
+        awaitCacheCounter("stored", before.path("stored").asLong() + 3)
+        awaitCacheCounter("missesExpired", before.path("missesExpired").asLong() + 1)
+        val afterFourth = cacheStats()
+
+        fun delta(
+            from: com.fasterxml.jackson.databind.JsonNode,
+            to: com.fasterxml.jackson.databind.JsonNode,
+            field: String,
+        ) = to.path(field).asLong() - from.path(field).asLong()
+
+        assertEquals(1L, delta(before, afterFirst, "lookups"), "lookups after first: $before -> $afterFirst")
+        assertEquals(0L, delta(before, afterFirst, "hits"), "hits after first: $before -> $afterFirst")
+        assertEquals(1L, delta(before, afterFirst, "missesNoEntry"), "noEntry after first: $before -> $afterFirst")
+        assertEquals(1L, delta(before, afterFirst, "stored"), "stored after first: $before -> $afterFirst")
+
+        assertEquals(2L, delta(before, afterSecond, "lookups"), "lookups after second: $afterFirst -> $afterSecond")
+        assertEquals(1L, delta(before, afterSecond, "hits"), "hits after second: $afterFirst -> $afterSecond")
+
+        assertEquals(3L, delta(before, afterThird, "lookups"), "lookups after third: $afterSecond -> $afterThird")
+        assertEquals(2L, delta(before, afterThird, "missesNoEntry"), "noEntry after third: $afterSecond -> $afterThird")
+        assertEquals(2L, delta(before, afterThird, "stored"), "stored after third: $afterSecond -> $afterThird")
+
+        assertEquals(4L, delta(before, afterFourth, "lookups"), "lookups after fourth: $afterThird -> $afterFourth")
+        assertEquals(1L, delta(before, afterFourth, "missesExpired"), "expired after fourth: $afterThird -> $afterFourth")
+        assertEquals(3L, delta(before, afterFourth, "stored"), "stored after fourth: $afterThird -> $afterFourth")
+        assertEquals(
+            afterFourth.path("hits").asLong() + afterFourth.path("misses").asLong(),
+            afterFourth.path("lookups").asLong(),
+        )
+    }
+
+    @Test
+    fun `окно выработки не создаётся провайдеру без лимитов`() {
+        // обычный запрос через провайдера 'fake': лимитов нет — окна быть не должно (M18)
+        webTestClient.post().uri("/v1/messages")
+            .header("x-api-key", SEED_API_KEY)
+            .contentType(MediaType.APPLICATION_JSON)
+            .bodyValue(
+                """{"model":"fake-model","max_tokens":100,
+                    "messages":[{"role":"user","content":"окна только с лимитами"}]}""",
+            )
+            .exchange().expectStatus().isOk
+        awaitUsageEventRow("provider = 'fake' AND stream = 0")
+        assertEquals(
+            0,
+            jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM provider_usage_window WHERE provider_name = 'fake'",
+                Int::class.java,
+            ),
+        )
+
+        // провайдеру с лимитом окна окно заводится
+        val createdProvider = webTestClient.post().uri("/api/providers")
+            .contentType(MediaType.APPLICATION_JSON)
+            .bodyValue(
+                """{"name":"window-gate-provider","type":"anthropic",
+                    "baseUrl":"http://127.0.0.1:${upstreamPort()}","apiKey":"window-gate-secret",
+                    "limitWindowTokens":100000}""",
+            )
+            .exchange().expectStatus().isCreated
+            .expectBody(String::class.java).returnResult().responseBody!!
+        val providerId = objectMapper.readTree(createdProvider).path("id").asLong()
+        webTestClient.post().uri("/api/providers/$providerId/models")
+            .contentType(MediaType.APPLICATION_JSON)
+            .bodyValue(
+                """{"publicName":"window-gate-model","upstreamName":"upstream-model",
+                    "reasoning":"map","maxCompletionParam":false,"priority":100}""",
+            )
+            .exchange().expectStatus().isCreated
+        webTestClient.post().uri("/v1/messages")
+            .header("x-api-key", SEED_API_KEY)
+            .contentType(MediaType.APPLICATION_JSON)
+            .bodyValue(
+                """{"model":"window-gate-model","max_tokens":100,
+                    "messages":[{"role":"user","content":"привет"}]}""",
+            )
+            .exchange().expectStatus().isOk
+        awaitUsageEventRow("provider = 'window-gate-provider' AND stream = 0")
+        assertEquals(
+            1,
+            jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM provider_usage_window WHERE provider_name = 'window-gate-provider'",
+                Int::class.java,
+            ),
+        )
+    }
+
+    @Test
     fun `кэш уважает TTL выключение истечение канонический ключ и LRU`() = runBlocking {
         // канонический ключ: порядок ключей JSON не влияет на хэш
         val rootDirect = objectMapper.readTree("""{"model":"x","max_tokens":10}""")
@@ -715,12 +858,11 @@ class ProxyIntegrationTest {
             .jsonPath("$[0].providers[0]").isEqualTo("fake")
             .jsonPath("$[0].costUsd").doesNotExist()
 
-        // история окон провайдеров — независимый отсчёт у каждого
+        // история окон провайдеров — безлимитный провайдер окна не получает (M18)
         webTestClient.get().uri("/api/provider-windows?limit=5")
             .exchange().expectStatus().isOk
             .expectBody()
-            .jsonPath("$[?(@.providerName == 'fake')].totals.inputTokens")
-            .isEqualTo(10)
+            .jsonPath("$[?(@.providerName == 'fake')]").isEmpty
 
         webTestClient.get().uri("/api/timeline?bucket=hour")
             .exchange().expectStatus().isOk

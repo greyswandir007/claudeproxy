@@ -419,6 +419,19 @@ export interface ModelRequest {
   priority: number
 }
 
+/** Диагностика кэша повторов (счётчики с момента старта сервера). */
+export interface RequestCacheStats {
+  lookups: number
+  hits: number
+  misses: number
+  /** Промах: записи под такой ключ нет вовсе. */
+  missesNoEntry: number
+  /** Промах: запись есть, но срок её жизни истёк. */
+  missesExpired: number
+  /** Записано новых ответов. */
+  stored: number
+}
+
 export const api = {
   summary: (range: string, key: string | null) =>
     getJson<RangeSummary>(`/api/summary?range=${range}${key ? `&key=${encodeURIComponent(key)}` : ''}`),
@@ -451,6 +464,7 @@ export const api = {
     ),
   latency: (bucket: 'hour' | 'day', from: number, to: number) =>
     getJson<LatencyStatisticsView>(`/api/latency?bucket=${bucket}&from=${from}&to=${to}`),
+  requestCacheStats: () => getJson<RequestCacheStats>('/api/request-cache-stats'),
   groupedTimeline: (
     bucket: 'hour' | 'day',
     key: string | null,

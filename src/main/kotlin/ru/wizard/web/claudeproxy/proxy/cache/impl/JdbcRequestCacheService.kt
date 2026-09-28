@@ -15,6 +15,7 @@ import ru.wizard.web.claudeproxy.db.DatabaseProvider
 import ru.wizard.web.claudeproxy.proxy.cache.RequestCacheService
 import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicLong
 
 /**
  * Кэш повторяющихся запросов в SQLite (таблица request_cache, V10).
@@ -35,6 +36,13 @@ internal class JdbcRequestCacheService(
 
     /** Single-flight: ключ «путь#хэш» → ждущие завершения первого прохода. */
     private val parallelFlights = ConcurrentHashMap<String, CompletableDeferred<Unit>>()
+
+    /** Счётчики диагностики (M18): с момента старта процесса, в памяти. */
+    private val lookupCount = AtomicLong()
+    private val hitCount = AtomicLong()
+    private val missNoEntryCount = AtomicLong()
+    private val missExpiredCount = AtomicLong()
+    private val storedCount = AtomicLong()
 
     override fun buildCacheKey(upstreamPath: String, requestRoot: JsonNode): RequestCacheService.RequestCacheKey {
         // stream и metadata не влияют на содержание ответа — в ключ не входят
@@ -61,10 +69,13 @@ internal class JdbcRequestCacheService(
 
     override suspend fun lookup(cacheKey: RequestCacheService.RequestCacheKey): RequestCacheService.CachedResponse? =
         databaseProvider.execute {
+            lookupCount.incrementAndGet()
+            // expires_at читаем и сравниваем в коде (а не в SQL), чтобы отличить
+            // «строки нет» от «строка протухла» — причина промаха для диагностики.
             val cached = jdbcTemplate.query(
-                """SELECT response_body, response_format, model, provider, input_tokens, output_tokens
+                """SELECT response_body, response_format, model, provider, input_tokens, output_tokens, expires_at
                    FROM request_cache
-                   WHERE cache_key = ? AND upstream_path = ? AND expires_at > ?""",
+                   WHERE cache_key = ? AND upstream_path = ?""",
                 { resultSet, _ ->
                     RequestCacheService.CachedResponse(
                         responseBody = resultSet.getString("response_body"),
@@ -73,22 +84,34 @@ internal class JdbcRequestCacheService(
                         provider = resultSet.getString("provider"),
                         inputTokens = resultSet.getLong("input_tokens"),
                         outputTokens = resultSet.getLong("output_tokens"),
-                    )
+                    ) to resultSet.getLong("expires_at")
                 },
                 cacheKey.hash,
                 cacheKey.upstreamPath,
-                System.currentTimeMillis(),
             ).firstOrNull()
-            // LRU: свежепрочитанная строка считается самой недавно использованной.
-            if (cached != null) {
-                jdbcTemplate.update(
-                    "UPDATE request_cache SET last_accessed_at = ? WHERE cache_key = ? AND upstream_path = ?",
-                    System.currentTimeMillis(),
-                    cacheKey.hash,
-                    cacheKey.upstreamPath,
-                )
+            when {
+                cached == null -> {
+                    missNoEntryCount.incrementAndGet()
+                    logger.debug { "request cache miss: no entry for path=${cacheKey.upstreamPath}" }
+                    null
+                }
+                cached.second <= System.currentTimeMillis() -> {
+                    missExpiredCount.incrementAndGet()
+                    logger.debug { "request cache miss: entry expired for path=${cacheKey.upstreamPath}" }
+                    null
+                }
+                else -> {
+                    hitCount.incrementAndGet()
+                    // LRU: свежепрочитанная строка считается самой недавно использованной.
+                    jdbcTemplate.update(
+                        "UPDATE request_cache SET last_accessed_at = ? WHERE cache_key = ? AND upstream_path = ?",
+                        System.currentTimeMillis(),
+                        cacheKey.hash,
+                        cacheKey.upstreamPath,
+                    )
+                    cached.first
+                }
             }
-            cached
         }
 
     override fun storeAsync(entry: RequestCacheService.CachedEntry) {
@@ -138,6 +161,7 @@ internal class JdbcRequestCacheService(
                         proxyProperties.requestCache.maxRows,
                     )
                 }
+                storedCount.incrementAndGet()
             } catch (exception: Exception) {
                 logger.warn(exception) { "request cache store failed" }
             }
@@ -161,6 +185,16 @@ internal class JdbcRequestCacheService(
         val flightKey = "${cacheKey.upstreamPath}#${cacheKey.hash}"
         parallelFlights.remove(flightKey)?.complete(Unit)
     }
+
+    override fun diagnostics(): RequestCacheService.RequestCacheDiagnostics =
+        RequestCacheService.RequestCacheDiagnostics(
+            lookups = lookupCount.get(),
+            hits = hitCount.get(),
+            misses = missNoEntryCount.get() + missExpiredCount.get(),
+            missesNoEntry = missNoEntryCount.get(),
+            missesExpired = missExpiredCount.get(),
+            stored = storedCount.get(),
+        )
 
     /** Каноническая сериализация JsonNode: объекты с сортированными ключами. */
     private fun canonicalJson(node: JsonNode): String = when {

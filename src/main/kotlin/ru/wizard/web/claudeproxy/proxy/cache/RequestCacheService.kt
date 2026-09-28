@@ -76,6 +76,25 @@ interface RequestCacheService {
     /** Отмечает завершение «платного прохода» (разбуживает ждущих). */
     fun endFlight(cacheKey: RequestCacheKey)
 
+    /**
+     * Диагностика кэша повторов: счётчики с момента старта процесса (в памяти,
+     * не персистентны). misses = missesNoEntry + missesExpired.
+     */
+    data class RequestCacheDiagnostics(
+        val lookups: Long,
+        val hits: Long,
+        val misses: Long,
+        /** Промах: строки с таким ключом в таблице нет вовсе. */
+        val missesNoEntry: Long,
+        /** Промах: строка есть, но expires_at уже прошёл. */
+        val missesExpired: Long,
+        /** Записано новых ответов (кэш включён и проход успешен). */
+        val stored: Long,
+    )
+
+    /** Снимок счётчиков диагностики кэша. */
+    fun diagnostics(): RequestCacheDiagnostics
+
     companion object {
         /** Ключ настройки провайдера: TTL кэша, мс (0 = выключен). */
         const val SETTING_TIME_TO_LIVE_MILLISECONDS = "REQUEST_CACHE_TTL_MS"
