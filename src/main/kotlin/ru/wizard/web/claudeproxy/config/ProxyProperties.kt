@@ -18,6 +18,7 @@ class ProxyProperties(
     var dashboard: Dashboard = Dashboard(),
     var requestCache: RequestCache = RequestCache(),
     var serverEvent: ServerEvent = ServerEvent(),
+    var backup: Backup = Backup(),
 ) {
     class Models(
         /** Белый список public-моделей; пусто = все модели всех провайдеров. */
@@ -27,6 +28,15 @@ class ProxyProperties(
     class ApiKeySeed(
         var name: String = "",
         var key: String = "",
+    )
+
+    /** Периодический бэкап файла SQLite (для PostgreSQL задача неактивна). */
+    class Backup(
+        var enabled: Boolean = false,
+        /** Каталог для файлов бэкапов (создаётся при необходимости). */
+        var directory: String = "backups",
+        /** Сколько последних бэкапов хранить. */
+        var retentionCount: Int = 7,
     )
 
     class Dashboard(var auth: Auth = Auth()) {

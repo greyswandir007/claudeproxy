@@ -16,6 +16,15 @@ claudeproxy:
     # Максимум строк в кэше; лишние вытесняются по LRU.
     max-rows: 1000
 
+  # Периодический бэкап SQLite (VACUUM INTO, без остановки записи).
+  # Для PostgreSQL задача неактивна — используйте pg_dump.
+  # backup:
+  #   enabled: true
+  #   directory: backups
+  #   retention-count: 7
+  #   # cron-расписание запуска (по умолчанию ежедневно в 03:53):
+  #   # cron: "0 53 3 * * *"
+
   # Basic Auth для дашборда и /api — раскомментируйте для production.
   # Включается, когда заданы оба поля; без них дашборд доступен только с localhost.
   # dashboard:

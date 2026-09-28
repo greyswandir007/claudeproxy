@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Конфигурация логирования. Профиль Spring "json" включает структурные
+  JSON-логи (Logstash-энкодер) — для серверного окружения и сбора логов:
+  SPRING_PROFILES_ACTIVE=json или аргумент запуска spring.profiles.active=json.
+  Без профиля — обычный человекочитаемый консольный вывод.
+-->
+<configuration>
+    <springProfile name="json">
+        <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+            <encoder class="net.logstash.logback.encoder.LogstashEncoder">
+                <customFields>{"service":"claudeproxy"}</customFields>
+                <timeZone>UTC</timeZone>
+            </encoder>
+        </appender>
+        <root level="INFO">
+            <appender-ref ref="CONSOLE"/>
+        </root>
+    </springProfile>
+
+    <springProfile name="!json">
+        <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+            <encoder>
+                <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} %5level [%thread] %logger{40} - %msg%n</pattern>
+            </encoder>
+        </appender>
+        <root level="INFO">
+            <appender-ref ref="CONSOLE"/>
+        </root>
+    </springProfile>
+</configuration>

@@ -28,6 +28,7 @@ dependencies {
 	implementation("io.github.oshai:kotlin-logging-jvm:7.0.3")
 	implementation("com.fasterxml.jackson.module:jackson-module-kotlin")
 	implementation("org.xerial:sqlite-jdbc:3.50.3.0")
+	implementation("net.logstash.logback:logstash-logback-encoder:8.1")
 	runtimeOnly("org.postgresql:postgresql")
 	testImplementation("org.springframework.boot:spring-boot-starter-test")
 	testImplementation("io.projectreactor:reactor-test")
