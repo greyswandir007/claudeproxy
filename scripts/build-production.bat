@@ -8,8 +8,8 @@ call "%PROJECT_ROOT%\gradlew.bat" clean buildDashboard bootJar --console=plain
 if errorlevel 1 goto :error
 
 echo.
-echo [build-production] Done: build\libs\claudeproxy-0.0.1-SNAPSHOT.jar
-echo [build-production] Run:    java -jar build\libs\claudeproxy-0.0.1-SNAPSHOT.jar
+echo [build-production] Done: app\build\libs\claudeproxy-0.0.1-SNAPSHOT.jar
+echo [build-production] Run:    java -jar app\build\libs\claudeproxy-0.0.1-SNAPSHOT.jar
 exit /b 0
 
 :error

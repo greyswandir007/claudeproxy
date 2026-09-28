@@ -6,7 +6,7 @@ cd /d "%~dp0.."
 call gradlew.bat test || goto :error
 call gradlew.bat bootJar || goto :error
 
-if not exist "build\libs\claudeproxy-0.0.1-SNAPSHOT.jar" goto :error
+if not exist "app\build\libs\claudeproxy-0.0.1-SNAPSHOT.jar" goto :error
 
 docker build -t claudeproxy:local . || goto :error
 
