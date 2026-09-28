@@ -250,9 +250,10 @@ class OpenAiRequestTranslator(private val objectMapper: ObjectMapper) {
                 "auto" -> target.put("tool_choice", "auto")
                 "any" -> target.put("tool_choice", "required")
                 "none" -> target.put("tool_choice", "none")
-                "tool" -> target.putObject("tool_choice")
-                    .putObject("function")
-                    .put("name", toolChoice.path("name").asText())
+                "tool" -> target.putObject("tool_choice").apply {
+                    put("type", "function")
+                    putObject("function").put("name", toolChoice.path("name").asText())
+                }
             }
             if (toolChoice.path("disable_parallel_tool_use").asBoolean(false)) {
                 target.put("parallel_tool_calls", false)
