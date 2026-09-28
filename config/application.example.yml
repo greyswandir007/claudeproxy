@@ -68,3 +68,16 @@ claudeproxy:
           upstream: deepseek/deepseek-chat
           reasoning: map                 # DeepSeek: reasoning_content → thinking
           max-completion-param: false
+
+# PostgreSQL вместо встроенного SQLite (миграции диалекта применяются
+# автоматически; данные из SQLite не переносятся). Раскомментируйте и
+# укажите реквизиты; с PostgreSQL Hikari держит пул соединений и запись
+# конкурентна. В Docker проще через docker-compose.postgres.yml (см. README).
+#spring:
+#  datasource:
+#    url: jdbc:postgresql://localhost:5432/claudeproxy
+#    username: claudeproxy
+#    password: ${POSTGRES_PASSWORD}
+#    driver-class-name: org.postgresql.Driver
+#    hikari:
+#      maximum-pool-size: 8

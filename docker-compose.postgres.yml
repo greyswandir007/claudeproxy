@@ -1,0 +1,33 @@
+# PostgreSQL-вариант поверх базового docker-compose.yml:
+#   docker compose -f docker-compose.yml -f docker-compose.postgres.yml up -d
+# Пароль — в файле .env рядом с compose-файлами: POSTGRES_PASSWORD=...
+# Данные SQLite из ./data при этом не используются.
+services:
+  claudeproxy:
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/claudeproxy
+      SPRING_DATASOURCE_USERNAME: claudeproxy
+      SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      SPRING_DATASOURCE_DRIVER_CLASS_NAME: org.postgresql.Driver
+      SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE: "8"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  postgres:
+    image: postgres:17-alpine
+    container_name: claudeproxy-postgres
+    environment:
+      POSTGRES_DB: claudeproxy
+      POSTGRES_USER: claudeproxy
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U claudeproxy -d claudeproxy"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  postgres-data:

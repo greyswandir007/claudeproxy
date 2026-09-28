@@ -531,8 +531,11 @@ Claude Code — основной клиент).
    колонка «≈$» везде, где токены.
 3. **PostgreSQL-реализация DatabaseProvider** — архитектура готова (интерфейс +
    миграции совместимы); R2DBC/JDBC-провайдер для серверного развертывания.
+   (Реализовано в M23: PostgresDatabaseProvider + переносимый SQL, диалектные
+   миграции db/migration/postgres/.)
 4. **Docker + docker-compose** — образ с jar, том для SQLite, пример
    с PostgreSQL.
+   (Реализовано в M23: Dockerfile + docker-compose.yml + docker-compose.postgres.yml.)
 5. **Кэш повторяющихся запросов** — экономия токенов на идентичных запросах:
    канонический ключ = хэш (модель + system + messages + tools + параметры
    сэмплинга; `stream` и `metadata` в ключ не входят), ответ сохраняется
@@ -565,12 +568,13 @@ Claude Code — основной клиент).
 ### Рекомендуемый следующий шаг
 
 Реализованы: все «быстрые победы» (M6 + M14), средние п.1–2 (квоты ключей
-M15п1, тарификация M15п2), п.5 (кэш повторов, M16) и правки по итогам
-эксплуатации (M17 → M18).
+M15п1, тарификация M15п2), п.5 (кэш повторов, M16), правки по итогам
+эксплуатации (M17 → M18) и средние п.3–4 (PostgreSQL + Docker, M23).
 
-Следующий рекомендуемый этап — «средние п.3 + п.4: **PostgreSQL + Docker**»;
-опциональный M19 (локальная модель-оптимизатор) — по отдельному решению
-заказчика.
+Следующий рекомендуемый этап — инженерное из «крупных» п.5 (юнит-тесты
+трансляторов, CI, JSON-логи, бэкап SQLite) при подготовке к серверному
+развертыванию; опциональный M19 (локальная модель-оптимизатор) — по
+отдельному решению заказчика.
 
 ## 17. План v2 (поэтапный, согласован 2026-09-25)
 
@@ -810,6 +814,51 @@ percentile-helper; GET /api/latency → LatencyStatistics {points, общие
 средние/p95, requests}. На дашборде — плитки средних + p95 и график
 линий p95 (LatencyChart, recharts). Тест: ProxyIntegrationTest
 «латентность — ttft и длительность провайдера записываются».
+
+## 20. План v2.3 — PostgreSQL + Docker (M23, согласован 2026-09-28)
+
+Средние п.3 + п.4 бэклога: серверное развертывание одной командой.
+
+### Этап 1 ✅ — M23 «PostgreSQL + Docker» — выполнен
+
+Цель: внешний PostgreSQL для серверного развертывания (конкурентная запись,
+бэкапы штатными средствами) и Docker-образ с compose-запуском (SQLite по
+умолчанию, PostgreSQL опционально).
+
+- Диалекты: enum DatabaseDialect (префикс JDBC-URL + путь миграций);
+  DatabaseConfiguration выбирает реализацию DatabaseProvider автоматически
+  по настроенному DataSource — sqlite → одиночный писатель, postgres →
+  пул Hikari, конкурентно, JDBC-вызовы вне event-loop (Dispatchers.IO).
+- Миграции разложены по диалектам: db/migration/{sqlite,postgres}/V*.sql
+  (тот же нумерованный набор; postgres-вариант: BIGINT/IDENTITY/DOUBLE
+  PRECISION, синхронизация identity-последовательности после переноса id
+  в V2). schema_migration.applied_at → BIGINT (epoch millis не влезает
+  в int4).
+- Переносимый SQL: LRU-вытеснение request_cache переписано с
+  LIMIT -1 OFFSET ? (sqlite-специфика) на NOT IN (SELECT … LIMIT ?) —
+  работает в обоих диалектах; остальной SQL сервисов уже переносим
+  (флаги — INTEGER 0/1, никаких sqlite-функций).
+- Docker: Dockerfile (JRE 21 + boot-jar, непривилегированный пользователь,
+  томы /app/data и /app/config, JAVA_OPTS), .dockerignore (в контексте
+  только jar), docker-compose.yml (SQLite) + docker-compose.postgres.yml
+  (PostgreSQL 17 + healthcheck + SPRING_DATASOURCE_* поверх базового),
+  scripts/docker-build.{bat,sh}.
+- Тест: PostgresMigrationIntegrationTest — старт контекста против
+  одноразовой PostgreSQL-базы, применение всех postgres-миграций,
+  переносимое вытеснение кэша и запись usage_event с BIGINT-эпохой;
+  без переменных окружения CLAUDEPROXY_POSTGRES_TEST_* пропускается.
+
+Готовность: docker compose up -d (SQLite) или
+docker compose -f docker-compose.yml -f docker-compose.postgres.yml up -d
+(PostgreSQL) поднимает прокси с дашбордом; переключение диалекта — только
+URL источника данных, код один. Данные из SQLite автоматически
+не переносятся.
+
+Реализация (2026-09-28): postgres-драйвер runtimeOnly (версия из BOM
+Spring Boot); миграции SQLite перенесены в sqlite/ без изменения содержимого
+(история git — переименования). Все существующие тесты зелёные на SQLite;
+postgres-набор проверяется интеграционным тестом против одноразовой базы
+PostgreSQL 17 (команда — в README, раздел PostgreSQL).
 
 Порядок: M20 → M21 → M22 (M21 тривиален, выполняется попутно с любым
 этапом; M20/M22 независимы, порядок между ними — по выбору).

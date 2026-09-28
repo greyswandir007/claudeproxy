@@ -36,13 +36,14 @@ Ollama… с полным переводом протокола, включая 
   провайдеров с приоритетами; при quota exceeded / service unavailable и других
   повторимых ошибках прокси переключается на следующий маршрут (для стриминга —
   до первого события клиенту), попытки фиксируются в статистике.
-- **Миграции БД**: db/migration/V*.sql применяются автоматически при старте,
-  каждая в транзакции (DatabaseMigrationRunner).
+- **Миграции БД**: db/migration/{sqlite,postgres}/V*.sql применяются
+  автоматически при старте, каждая в транзакции; набор диалекта выбирается по
+  JDBC-URL источника данных (DatabaseMigrationRunner + DatabaseDialect).
 - **Собственные ключи доступа**: клиенты авторизуются ключами прокси
   (`x-api-key` или `Authorization: Bearer`), ключи провайдеров наружу не
   выходят; ключи генерируются и отзываются на странице «Ключи» дашборда
   (в БД — только SHA-256-хэши, полный ключ показывается один раз).
-- **Статистика использования (SQLite)**: токены input / output /
+- **Статистика использования (SQLite или PostgreSQL)**: токены input / output /
   cache_creation / cache_read по каждому запросу; всего, по моделям,
   провайдерам и ключам.
 - **5-часовые окна** (как лимиты подписки Claude): у каждого клиентского
@@ -58,7 +59,7 @@ Ollama… с полным переводом протокола, включая 
 - **Журнал событий сервера**: страница «События» — ошибки ключей и
   провайдеров, кулдауны и фолбэки, старт/стоп сервера; события уровня
   WARN/ERROR захватываются из логов приложения автоматически (Logback-
-  аппендер, порог — настройка), хранятся в SQLite с обрезкой stack trace,
+  аппендер, порог — настройка), хранятся в БД с обрезкой stack trace,
   асинхронная запись без влияния на запросы; фильтры по уровню/источнику/
   подстроке, курсорная подгрузка, очистка из UI, автоочистка старше
   `retention-days`.
@@ -71,7 +72,7 @@ Ollama… с полным переводом протокола, включая 
 ```text
 Claude Code / SDK ──Anthropic API──▶ claudeproxy (Kotlin, Spring WebFlux)
                                         │  auth ▶ модель-роутинг ▶ перевод протокола
-                                        │  учёт токенов ▶ SQLite
+                                        │  учёт токенов ▶ SQLite / PostgreSQL
                                         ├─▶ Anthropic-совместимые (pass-through)
                                         ├─▶ OpenAI-совместимые (перевод Claude↔OpenAI)
                                         └─▶ /api + дашборд (React)
@@ -123,6 +124,13 @@ Vite + Recharts**.
    scripts\build-production.bat        # Windows
    ./scripts/build-production.sh       # Linux
    java -jar build/libs/claudeproxy-0.0.1-SNAPSHOT.jar
+   ```
+
+5. **Docker** (образ с jar + docker-compose, SQLite или PostgreSQL —
+   разделы [Docker](#docker) и [PostgreSQL](#postgresql) ниже):
+
+   ```bash
+   scripts\docker-build.bat && docker compose up -d
    ```
 
 ## Production
@@ -186,6 +194,54 @@ response = client.chat.completions.create(model="gpt-5.2", messages=[...])
 | `config/application.example.yml` | пример конфигурации |
 | `data/claudeproxy.db` | SQLite со статистикой (в git не попадает) |
 | `web/` | исходники дашборда |
+| `Dockerfile`, `docker-compose*.yml` | образ и запуск в Docker (SQLite / PostgreSQL) |
+| `src/main/resources/db/migration/{sqlite,postgres}/` | миграции по диалектам БД |
+
+## Docker
+
+Образ — JRE 21 + готовый boot-jar (дашборд уже внутри). Сборка:
+
+```bat
+scripts\docker-build.bat          # тесты → bootJar → docker build claudeproxy:local
+```
+
+Запуск со встроенным SQLite (база и конфиг — в томах хоста):
+
+```bash
+docker compose up -d              # порты: 8080:8080, тома: ./data, ./config
+```
+
+## PostgreSQL
+
+Вместо встроенного SQLite — внешний PostgreSQL: свои миграции того же
+нумерованного набора (db/migration/postgres/), диалект выбирается
+автоматически по JDBC-URL. Данные из SQLite не переносятся (статистика
+и ключи заводятся заново).
+
+В Docker — второй compose-файл поверх базового (пароль в `.env` рядом):
+
+```bash
+echo POSTGRES_PASSWORD=... > .env
+docker compose -f docker-compose.yml -f docker-compose.postgres.yml up -d
+```
+
+Вне Docker — секция `spring.datasource` в config/application.yml
+(см. закомментированный блок в application.example.yml; не забудьте
+`driver-class-name: org.postgresql.Driver` и `maximum-pool-size` > 1).
+
+Интеграционный тест диалекта — `PostgresMigrationIntegrationTest`; он
+пропускается без переменных окружения и запускается против одноразовой
+пустой базы:
+
+```bash
+docker run -d --name pg-claudeproxy-test -p 55432:5432 \
+  -e POSTGRES_DB=claudeproxy -e POSTGRES_USER=claudeproxy -e POSTGRES_PASSWORD=claudeproxy \
+  postgres:17-alpine
+CLAUDEPROXY_POSTGRES_TEST_URL=jdbc:postgresql://localhost:55432/claudeproxy \
+CLAUDEPROXY_POSTGRES_TEST_USERNAME=claudeproxy \
+CLAUDEPROXY_POSTGRES_TEST_PASSWORD=claudeproxy \
+  ./gradlew test --tests '*PostgresMigrationIntegrationTest'
+```
 
 ## Разработка
 

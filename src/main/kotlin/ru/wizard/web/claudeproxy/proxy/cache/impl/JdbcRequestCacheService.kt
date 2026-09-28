@@ -154,10 +154,10 @@ internal class JdbcRequestCacheService(
                     )
                     // LRU-вытеснение по количеству строк.
                     jdbcTemplate.update(
-                        """DELETE FROM request_cache WHERE id IN (
+                        """DELETE FROM request_cache WHERE id NOT IN (
                                SELECT id FROM request_cache
                                ORDER BY last_accessed_at DESC, id DESC
-                               LIMIT -1 OFFSET ?)""",
+                               LIMIT ?)""",
                         proxyProperties.requestCache.maxRows,
                     )
                 }

@@ -8,14 +8,16 @@ import org.springframework.stereotype.Component
 import org.springframework.transaction.support.TransactionTemplate
 
 /**
- * Миграции БД: файлы classpath:db/migration/V<версия>__<имя>.sql применяются по порядку,
+ * Миграции БД: файлы classpath:db/migration/<диалект>/V<версия>__<имя>.sql применяются по порядку,
  * каждый — в транзакции; применённые версии фиксируются в schema_migration.
+ * Каталог диалекта (sqlite/postgres) выбирается по [DatabaseDialect].
  * V1 идемпотентен (CREATE IF NOT EXISTS): существующие базы, созданные старым
  * schema.sql, безопасно базируются на нём.
  */
 @Component
 class DatabaseMigrationRunner(
     private val databaseProvider: DatabaseProvider,
+    private val dialect: DatabaseDialect,
     private val jdbcTemplate: JdbcTemplate,
     private val transactionTemplate: TransactionTemplate,
 ) {
@@ -33,7 +35,7 @@ class DatabaseMigrationRunner(
             """CREATE TABLE IF NOT EXISTS schema_migration (
                    version INTEGER PRIMARY KEY,
                    name    TEXT NOT NULL,
-                   applied_at INTEGER NOT NULL)""",
+                   applied_at BIGINT NOT NULL)""",
         )
         val appliedVersions = jdbcTemplate.query(
             "SELECT version FROM schema_migration",
@@ -58,7 +60,7 @@ class DatabaseMigrationRunner(
 
     private fun loadMigrations(): List<Migration> {
         val resources = PathMatchingResourcePatternResolver()
-            .getResources("classpath:db/migration/V*.sql")
+            .getResources(dialect.migrationLocation)
         return resources.map { resource ->
             val filename = resource.filename ?: return@map null
             val match = filenamePattern.find(filename) ?: return@map null

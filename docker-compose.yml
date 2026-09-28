@@ -1,0 +1,17 @@
+# claudeproxy со встроенным SQLite: база и конфиг — в томах хоста.
+# Сборка образа: scripts/docker-build.bat (Windows) / scripts/docker-build.sh,
+# либо вручную: gradlew bootJar && docker compose build.
+# Вариант с PostgreSQL — docker-compose.postgres.yml (запуск двумя файлами, см. README).
+services:
+  claudeproxy:
+    build: .
+    image: claudeproxy:local
+    container_name: claudeproxy
+    ports:
+      - "8080:8080"
+    environment:
+      SERVER_PORT: "8080"
+    volumes:
+      - ./data:/app/data
+      - ./config:/app/config
+    restart: unless-stopped
