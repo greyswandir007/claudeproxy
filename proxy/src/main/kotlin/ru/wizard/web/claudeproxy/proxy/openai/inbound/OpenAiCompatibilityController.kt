@@ -38,6 +38,7 @@ class OpenAiCompatibilityController(
     private val objectMapper: ObjectMapper,
     private val anthropicHandler: AnthropicHandler,
     private val openAiHandler: OpenAiHandler,
+    private val conversationAffinityService: ru.wizard.web.claudeproxy.routing.ConversationAffinityService,
 ) {
     private val requestTranslator = OpenAiInboundRequestTranslator(objectMapper)
     private val responseTranslator = ClaudeToOpenAiResponseTranslator(objectMapper)
@@ -62,7 +63,10 @@ class OpenAiCompatibilityController(
         }
         val claudeRoot = requestTranslator.translate(openAiRoot)
         keyQuotaService.enforce(exchange, model)
-        val routes = modelRegistry.find(model)
+        // ключ разговора sticky-аффинности: считается по Claude-форме (после перевода),
+        // одна функция с /v1/messages — растущий хвост разговора ключ не меняет
+        val conversationKey = conversationAffinityService.conversationKey(claudeRoot)
+        val routes = modelRegistry.find(model, conversationKey = conversationKey)
         if (routes.isEmpty()) {
             throw ApiError(
                 HttpStatus.NOT_FOUND,
@@ -77,9 +81,12 @@ class OpenAiCompatibilityController(
                 claudeRoot,
                 "/v1/messages",
                 recordUsage = true,
+                conversationKey = conversationKey,
             )
 
-            "openai" -> openAiHandler.chatCompletion(exchange, routes, claudeRoot, recordUsage = true)
+            "openai" -> openAiHandler.chatCompletion(
+                exchange, routes, claudeRoot, recordUsage = true, conversationKey = conversationKey,
+            )
 
             else -> throw ApiError(
                 HttpStatus.NOT_IMPLEMENTED,

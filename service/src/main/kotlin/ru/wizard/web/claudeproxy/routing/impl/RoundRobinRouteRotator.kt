@@ -49,6 +49,33 @@ class RoundRobinRouteRotator {
         return rotated
     }
 
+    /**
+     * Sticky-порядок для аффинности разговора: привязанный провайдер становится
+     * головой СВОЕГО сегмента равных (priority, тип провайдера); остальные
+     * сегменты и порядок внутри них — как в снапшоте. Курсор ротации не
+     * сдвигается: sticky-запрос не должен влиять на чередование новых разговоров.
+     *
+     * null — привязка неприменима: провайдера нет в списке (исключён/удалён)
+     * или его сегмент одиночный (продвигать нечего, тянуть через приоритет
+     * нельзя — экономика важнее кэша).
+     */
+    fun stickyOrder(routes: List<ModelRegistry.Route>, stickyProviderName: String): List<ModelRegistry.Route>? {
+        val stickyIndex = routes.indexOfFirst { it.provider.name == stickyProviderName }
+        if (stickyIndex < 0) return null
+        val segment = segmentsByPriorityAndType(routes)
+            .firstOrNull { (start, end) -> stickyIndex >= start && stickyIndex < end }
+            ?: return null
+        if (segment.second - segment.first < 2) return null
+        val ordered = ArrayList<ModelRegistry.Route>(routes.size)
+        ordered.addAll(routes.subList(0, segment.first))
+        ordered.add(routes[stickyIndex])
+        for (position in segment.first until segment.second) {
+            if (position != stickyIndex) ordered.add(routes[position])
+        }
+        ordered.addAll(routes.subList(segment.second, routes.size))
+        return ordered
+    }
+
     /** Границы (start, end) сегментов подряд идущих маршрутов с равными (priority, тип провайдера). */
     private fun segmentsByPriorityAndType(routes: List<ModelRegistry.Route>): List<Pair<Int, Int>> {
         val segments = ArrayList<Pair<Int, Int>>()

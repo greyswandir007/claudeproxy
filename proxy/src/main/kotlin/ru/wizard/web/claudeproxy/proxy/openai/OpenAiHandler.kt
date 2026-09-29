@@ -20,6 +20,7 @@ interface OpenAiHandler {
         routes: List<ModelRegistry.Route>,
         requestRoot: JsonNode,
         recordUsage: Boolean,
+        conversationKey: String? = null,
     ): ResponseEntity<Flux<DataBuffer>>
 
     /** Подсчёт токенов: локальная оценка (~4 символа на токен), без похода к провайдеру. */

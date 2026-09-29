@@ -44,8 +44,14 @@ interface ModelRegistry {
      * (priority, тип провайдера) маршруты чередуются от вызова к вызову
      * (round-robin). Оценочные пути (count_tokens) передают [rotate] = false,
      * чтобы не сдвигать курсор ротации: ход Claude Code — count_tokens + messages.
+     *
+     * [conversationKey] — ключ разговора sticky-аффинности (см.
+     * [ConversationAffinityService]): при живой привязке привязанный маршрут
+     * становится головой своего сегмента равных, ротация пропускается (курсор
+     * не сдвигается). Приоритет всегда доминирует: через границу сегмента
+     * привязка не продвигается.
      */
-    fun find(model: String, rotate: Boolean = true): List<Route>
+    fun find(model: String, rotate: Boolean = true, conversationKey: String? = null): List<Route>
 
     fun isExposed(model: String): Boolean
 

@@ -20,6 +20,7 @@ class StatsController(
     private val proxyProperties: ProxyProperties,
     private val routeCircuitBreaker: ru.wizard.web.claudeproxy.routing.RouteCircuitBreaker,
     private val requestCacheService: ru.wizard.web.claudeproxy.proxy.cache.RequestCacheService,
+    private val conversationAffinityService: ru.wizard.web.claudeproxy.routing.ConversationAffinityService,
 ) {
 
     @GetMapping("/api/summary")
@@ -145,6 +146,11 @@ class StatsController(
     @GetMapping("/api/request-cache-stats")
     fun requestCacheStats(): ru.wizard.web.claudeproxy.proxy.cache.RequestCacheService.RequestCacheDiagnostics =
         requestCacheService.diagnostics()
+
+    /** Диагностика sticky-аффинности разговоров: привязки и попадания (с момента старта). */
+    @GetMapping("/api/conversation-affinity-stats")
+    fun conversationAffinityStats(): ru.wizard.web.claudeproxy.routing.ConversationAffinityService.ConversationAffinityDiagnostics =
+        conversationAffinityService.diagnostics()
 
     /** Провайдеры и модели из реестра (read-only, без ключей провайдеров). */
     @GetMapping("/api/config")

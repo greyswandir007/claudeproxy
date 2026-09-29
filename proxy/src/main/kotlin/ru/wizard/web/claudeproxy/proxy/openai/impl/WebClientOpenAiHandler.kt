@@ -26,6 +26,7 @@ import ru.wizard.web.claudeproxy.proxy.TokenSavingAdjuster
 import ru.wizard.web.claudeproxy.proxy.cache.CachedResponsePresenter
 import ru.wizard.web.claudeproxy.proxy.cache.RequestCacheService
 import ru.wizard.web.claudeproxy.providers.ProviderOAuthTokenService
+import ru.wizard.web.claudeproxy.routing.ConversationAffinityService
 import ru.wizard.web.claudeproxy.routing.RouteCircuitBreaker
 import ru.wizard.web.claudeproxy.proxy.openai.OpenAiHandler
 import ru.wizard.web.claudeproxy.routing.ModelRegistry
@@ -48,6 +49,7 @@ class WebClientOpenAiHandler(
     private val oauthTokenService: ProviderOAuthTokenService,
     private val routeCircuitBreaker: RouteCircuitBreaker,
     private val requestCacheService: RequestCacheService,
+    private val conversationAffinityService: ConversationAffinityService,
 ) : OpenAiHandler {
     private val logger = KotlinLogging.logger {}
 
@@ -68,6 +70,7 @@ class WebClientOpenAiHandler(
         routes: List<ModelRegistry.Route>,
         requestRoot: JsonNode,
         recordUsage: Boolean,
+        conversationKey: String?,
     ): ResponseEntity<Flux<DataBuffer>> {
         val stream = requestRoot.path("stream").asBoolean(false)
         val clientKey = exchange.getAttribute(ApiKeyAuthFilter.CLIENT_KEY_ATTRIBUTE) ?: "unknown"
@@ -104,7 +107,7 @@ class WebClientOpenAiHandler(
                 .header(HttpHeaders.CACHE_CONTROL, "no-cache")
                 .body(
                     Flux.defer {
-                        attemptStream(exchange, activeRoutes, 0, requestRoot, recordUsage, clientKey, bearerToken, cacheKey)
+                        attemptStream(exchange, activeRoutes, 0, requestRoot, recordUsage, clientKey, bearerToken, cacheKey, conversationKey)
                     }.doFinally {
                         // single-flight: первый проход завершился (записал ответ или нет)
                         if (cacheKey != null) requestCacheService.endFlight(cacheKey)
@@ -112,7 +115,7 @@ class WebClientOpenAiHandler(
                 )
         } else {
             try {
-                attemptSequential(exchange, activeRoutes, requestRoot, recordUsage, clientKey, bearerToken, cacheKey)
+                attemptSequential(exchange, activeRoutes, requestRoot, recordUsage, clientKey, bearerToken, cacheKey, conversationKey)
             } finally {
                 if (cacheKey != null) requestCacheService.endFlight(cacheKey)
             }
@@ -144,6 +147,7 @@ class WebClientOpenAiHandler(
         clientKey: String,
         bearerToken: String,
         cacheKey: RequestCacheService.RequestCacheKey?,
+        conversationKey: String?,
     ): ResponseEntity<Flux<DataBuffer>> {
         for ((index, route) in routes.withIndex()) {
             val startedAtMilliseconds = System.currentTimeMillis()
@@ -182,6 +186,12 @@ class WebClientOpenAiHandler(
                         ),
                     )
                     routeCircuitBreaker.success(route.provider.name)
+                    // sticky-аффинность: успешный ход привязывает разговор к провайдеру
+                    if (recordUsage && responseEntity.statusCode.is2xxSuccessful()) {
+                        conversationAffinityService.bind(
+                            requestRoot.path("model").asText(""), conversationKey, route.provider.name,
+                        )
+                    }
                     // первый проход успешен — сохраняем ответ в кэш повторов
                     if (cacheKey != null && responseEntity.statusCode.is2xxSuccessful()) {
                         requestCacheService.storeAsync(
@@ -266,6 +276,7 @@ class WebClientOpenAiHandler(
         clientKey: String,
         bearerToken: String,
         cacheKey: RequestCacheService.RequestCacheKey?,
+        conversationKey: String?,
     ): Flux<DataBuffer> {
         val route = routes[index]
         val startedAtMilliseconds = System.currentTimeMillis()
@@ -316,6 +327,13 @@ class WebClientOpenAiHandler(
             .doFinally { signal ->
                 if (signal != SignalType.ON_ERROR) {
                     routeCircuitBreaker.success(route.provider.name)
+                    // sticky-аффинность: успешный (в т.ч. отменённый клиентом) стрим
+                    // привязывает разговор к провайдеру
+                    if (recordUsage) {
+                        conversationAffinityService.bind(
+                            requestRoot.path("model").asText(""), conversationKey, route.provider.name,
+                        )
+                    }
                 }
                 if (recordUsage && signal != SignalType.ON_ERROR) {
                     val upstreamEndedAtMilliseconds = System.currentTimeMillis()
@@ -368,7 +386,7 @@ class WebClientOpenAiHandler(
                         "Route '${route.provider.name}/${route.mapping.upstreamName}' failed before " +
                             "first event (${shortError(error)}) - switching to next route"
                     }
-                    attemptStream(exchange, routes, index + 1, requestRoot, recordUsage, clientKey, bearerToken, cacheKey)
+                    attemptStream(exchange, routes, index + 1, requestRoot, recordUsage, clientKey, bearerToken, cacheKey, conversationKey)
                 } else {
                     logger.error(error) { "Stream from provider '${route.provider.name}' aborted" }
                     Flux.just(

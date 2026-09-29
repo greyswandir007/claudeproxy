@@ -1,6 +1,7 @@
 package ru.wizard.web.claudeproxy.routing.impl
 
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Test
 import ru.wizard.web.claudeproxy.routing.ModelRegistry
@@ -126,5 +127,45 @@ class RoundRobinRouteRotatorTest {
         val snapshot = routes.toList()
         rotator.rotate("m", routes)
         assertEquals(snapshot, routes)
+    }
+
+    @Test
+    fun `sticky поднимает привязанного в голову своего сегмента`() {
+        val routes = listOf(
+            route("one", priority = 10),
+            route("two", priority = 10),
+            route("three", priority = 10),
+        )
+        assertEquals(listOf("two", "one", "three"), names(rotator.stickyOrder(routes, "two")!!))
+    }
+
+    @Test
+    fun `sticky не пересекает границу приоритета`() {
+        val routes = listOf(
+            route("primary", priority = 5),
+            route("secondary-one", priority = 10),
+            route("secondary-two", priority = 10),
+        )
+        // привязка к строгому приоритету: сегмент одиночный, продвижения нет
+        assertNull(rotator.stickyOrder(routes, "primary"))
+        // привязка во втором сегменте: головной сегмент не тронут
+        assertEquals(
+            listOf("primary", "secondary-two", "secondary-one"),
+            names(rotator.stickyOrder(routes, "secondary-two")!!),
+        )
+    }
+
+    @Test
+    fun `sticky отсутствующего провайдера неприменим`() {
+        val routes = listOf(route("one", priority = 10), route("two", priority = 10))
+        assertNull(rotator.stickyOrder(routes, "missing"))
+    }
+
+    @Test
+    fun `sticky не сдвигает курсор ротации`() {
+        val routes = listOf(route("one", priority = 10), route("two", priority = 10))
+        rotator.stickyOrder(routes, "two")
+        // курсор не потрачен на sticky-запрос: следующая ротация стартует с базового порядка
+        assertEquals(listOf("one", "two"), names(rotator.rotate("m", routes)))
     }
 }

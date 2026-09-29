@@ -17,6 +17,7 @@ class ProxyProperties(
     var providers: List<Provider> = emptyList(),
     var dashboard: Dashboard = Dashboard(),
     var requestCache: RequestCache = RequestCache(),
+    var conversationAffinity: ConversationAffinity = ConversationAffinity(),
     var serverEvent: ServerEvent = ServerEvent(),
     var backup: Backup = Backup(),
 ) {
@@ -86,5 +87,15 @@ class ProxyProperties(
         var reasoning: String = "map",
         /** true => шлём max_completion_tokens вместо max_tokens (o-серия). */
         var maxCompletionParam: Boolean = false,
+    )
+
+    class ConversationAffinity(
+        /** Sticky-аффинность разговоров: продолжать разговор на том же провайдере
+         *  из числа равнозначных, чтобы не терять промпт-кэш вверх по течению. */
+        var enabled: Boolean = false,
+        /** Привязка живёт, пока с последнего успешного хода разговора прошло меньше этого. */
+        var ttlSeconds: Long = 3600,
+        /** Лимит записей привязок в памяти; переполнение выталкивает самые старые. */
+        var maxEntries: Int = 1000,
     )
 }

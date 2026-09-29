@@ -22,5 +22,6 @@ interface AnthropicHandler {
         requestRoot: JsonNode,
         upstreamPath: String,
         recordUsage: Boolean,
+        conversationKey: String? = null,
     ): ResponseEntity<Flux<DataBuffer>>
 }

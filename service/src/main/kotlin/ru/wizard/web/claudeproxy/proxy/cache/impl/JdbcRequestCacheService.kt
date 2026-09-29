@@ -1,7 +1,6 @@
 package ru.wizard.web.claudeproxy.proxy.cache.impl
 
 import com.fasterxml.jackson.databind.JsonNode
-import com.fasterxml.jackson.databind.node.TextNode
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -13,6 +12,7 @@ import org.springframework.stereotype.Component
 import ru.wizard.web.claudeproxy.config.ProxyProperties
 import ru.wizard.web.claudeproxy.db.DatabaseProvider
 import ru.wizard.web.claudeproxy.proxy.cache.RequestCacheService
+import ru.wizard.web.claudeproxy.util.CanonicalJsonSerializer
 import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
@@ -63,7 +63,7 @@ internal class JdbcRequestCacheService(
         } else {
             requestRoot
         }
-        val canonicalRequest = canonicalJson(keyRoot)
+        val canonicalRequest = CanonicalJsonSerializer.serialize(keyRoot)
         val digest = MessageDigest.getInstance("SHA-256")
             .digest("$upstreamPath\n$canonicalRequest".toByteArray(Charsets.UTF_8))
         return RequestCacheService.RequestCacheKey(
@@ -226,20 +226,6 @@ internal class JdbcRequestCacheService(
                         .thenBy { it.model },
                 ),
         )
-
-    /** Каноническая сериализация JsonNode: объекты с сортированными ключами. */
-    private fun canonicalJson(node: JsonNode): String = when {
-        node.isObject -> {
-            val fields = ArrayList<Map.Entry<String, JsonNode>>(node.size())
-            node.fields().forEach { fields.add(it) }
-            fields.sortBy { it.key }
-            fields.joinToString(separator = ",", prefix = "{", postfix = "}") { (name, value) ->
-                TextNode.valueOf(name).toString() + ":" + canonicalJson(value)
-            }
-        }
-        node.isArray -> node.joinToString(separator = ",", prefix = "[", postfix = "]") { canonicalJson(it) }
-        else -> node.toString()
-    }
 
     /** Счётчики диагностики кэша для одной публичной модели. */
     private class PerModelCounters {

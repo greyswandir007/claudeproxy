@@ -8,6 +8,7 @@ import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.stereotype.Component
 import ru.wizard.web.claudeproxy.config.EnvironmentReferenceResolver
 import ru.wizard.web.claudeproxy.db.DatabaseProvider
+import ru.wizard.web.claudeproxy.routing.ConversationAffinityService
 import ru.wizard.web.claudeproxy.routing.ModelRegistry
 
 /**
@@ -23,6 +24,7 @@ class DynamicModelRegistry(
     private val jdbcTemplate: JdbcTemplate,
     private val environment: Environment,
     private val objectMapper: ObjectMapper,
+    private val conversationAffinityService: ConversationAffinityService,
 ) : ModelRegistry {
     private val logger = KotlinLogging.logger {}
 
@@ -150,9 +152,17 @@ class DynamicModelRegistry(
         }
     }
 
-    override fun find(model: String, rotate: Boolean): List<ModelRegistry.Route> {
+    override fun find(model: String, rotate: Boolean, conversationKey: String?): List<ModelRegistry.Route> {
         ensureLoaded()
         val routes = snapshot.routesByName[model] ?: return emptyList()
+        // sticky-аффинность: при живой привязке привязанный маршрут возглавляет
+        // свой сегмент равных, ротация пропускается (курсор чередования не
+        // сдвигается); неприменимая привязка (провайдер исчез, сегмент
+        // одиночный) — запрос идёт как без аффинности
+        val boundProviderName = conversationAffinityService.boundProviderName(model, conversationKey)
+        if (boundProviderName != null) {
+            roundRobinRouteRotator.stickyOrder(routes, boundProviderName)?.let { return it }
+        }
         // ротируется копия: снапшот immutable и виден параллельным читателям
         return if (rotate) roundRobinRouteRotator.rotate(model, routes) else routes
     }
