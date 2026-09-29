@@ -9,6 +9,8 @@ interface Preset {
   title: string
   /** Скользящий пресет: правая граница привязана к текущему моменту. */
   rolling: boolean
+  /** Гранулярность таймлайна пресета — по номинальной длине, а не по прошедшей части. */
+  bucket: 'hour' | 'day'
   range: () => PeriodRange
 }
 
@@ -25,12 +27,14 @@ const PRESETS: Preset[] = [
     id: 'today',
     title: 'Сегодня',
     rolling: true,
+    bucket: 'hour',
     range: () => ({ fromMilliseconds: dayStart(0), toMilliseconds: Date.now() }),
   },
   {
     id: 'yesterday',
     title: 'Вчера',
     rolling: false,
+    bucket: 'hour',
     range: () => ({
       fromMilliseconds: dayStart(1),
       toMilliseconds: dayStart(1) + DAY - 1,
@@ -40,6 +44,7 @@ const PRESETS: Preset[] = [
     id: 'dayBeforeYesterday',
     title: 'Позавчера',
     rolling: false,
+    bucket: 'hour',
     range: () => ({
       fromMilliseconds: dayStart(2),
       toMilliseconds: dayStart(2) + DAY - 1,
@@ -49,6 +54,7 @@ const PRESETS: Preset[] = [
     id: 'week',
     title: 'Неделя',
     rolling: true,
+    bucket: 'day',
     range: () => {
       const monday = new Date()
       monday.setHours(0, 0, 0, 0)
@@ -60,6 +66,7 @@ const PRESETS: Preset[] = [
     id: 'previousWeek',
     title: 'Прошлая неделя',
     rolling: false,
+    bucket: 'day',
     range: () => {
       const monday = new Date()
       monday.setHours(0, 0, 0, 0)
@@ -72,12 +79,14 @@ const PRESETS: Preset[] = [
     id: 'last30days',
     title: '30 дней',
     rolling: true,
+    bucket: 'day',
     range: () => ({ fromMilliseconds: Date.now() - 30 * DAY, toMilliseconds: Date.now() }),
   },
   {
     id: 'previousMonth',
     title: 'Прошлый месяц',
     rolling: false,
+    bucket: 'day',
     range: () => {
       const now = new Date()
       const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).getTime()
@@ -96,6 +105,16 @@ export function rollingPresetRange(presetId: string | null): PeriodRange | null 
   const preset = PRESETS.find((item) => item.id === presetId)
   if (preset == null || !preset.rolling) return null
   return preset.range()
+}
+
+/**
+ * Гранулярность таймлайна пресета, заданная его номинальной длиной: у «недели»
+ * это дни, даже если с начала недели прошло меньше двух суток. Для произвольного
+ * диапазона возвращает null — там гранулярность выбирается по фактической длине.
+ */
+export function presetBucket(presetId: string | null): 'hour' | 'day' | null {
+  if (presetId == null) return null
+  return PRESETS.find((item) => item.id === presetId)?.bucket ?? null
 }
 
 export default function PeriodNavigator({

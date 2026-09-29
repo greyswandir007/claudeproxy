@@ -18,7 +18,7 @@ import {
   type ProviderWindowBoundary,
   type WindowSummary,
 } from '../api/client'
-import PeriodNavigator, { rollingPresetRange, type PeriodRange } from '../components/PeriodNavigator'
+import PeriodNavigator, { presetBucket, rollingPresetRange, type PeriodRange } from '../components/PeriodNavigator'
 import PeriodCard from '../components/PeriodCard'
 import CostSection from '../components/CostSection'
 import LatencyChart from '../components/LatencyChart'
@@ -89,8 +89,15 @@ export default function DashboardPage({ refreshTick }: { refreshTick: number }) 
 
   const keyParameter = selectedKey !== null && selectedKey.length > 0 ? selectedKey : null
   const windowHours = useMemo(() => proxyConfig?.windowHours ?? 5, [proxyConfig])
-  const bucket: 'hour' | 'day' =
-    effectiveRange.toMilliseconds - effectiveRange.fromMilliseconds <= 2 * DAY ? 'hour' : 'day'
+  // Гранулярность пресета — по номинальной длине («неделя» всегда дневная,
+  // даже в начале недели); произвольный диапазон — по фактической длине.
+  const bucket: 'hour' | 'day' = useMemo(() => {
+    const presetGranularity = presetBucket(selectedPreset)
+    if (presetGranularity !== null) return presetGranularity
+    return effectiveRange.toMilliseconds - effectiveRange.fromMilliseconds <= 2 * DAY
+      ? 'hour'
+      : 'day'
+  }, [selectedPreset, effectiveRange])
 
   useEffect(() => {
     api
