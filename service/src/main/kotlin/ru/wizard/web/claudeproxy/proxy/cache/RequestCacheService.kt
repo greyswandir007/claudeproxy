@@ -26,6 +26,8 @@ interface RequestCacheService {
         val upstreamPath: String,
         /** Каноническое тело запроса — хранится в кэше для отладки и контроля. */
         val canonicalRequest: String,
+        /** Публичное имя модели из тела клиента — для диагностики по моделям. */
+        val model: String,
     )
 
     /** Сохранённый ответ кэша для повтора. */
@@ -89,6 +91,19 @@ interface RequestCacheService {
         /** Промах: строка есть, но expires_at уже прошёл. */
         val missesExpired: Long,
         /** Записано новых ответов (кэш включён и проход успешен). */
+        val stored: Long,
+        /** Те же счётчики в разрезе публичных моделей. */
+        val perModel: List<RequestCacheModelDiagnostics>,
+    )
+
+    /** Счётчики диагностики кэша по одной публичной модели. */
+    data class RequestCacheModelDiagnostics(
+        val model: String,
+        val lookups: Long,
+        val hits: Long,
+        val misses: Long,
+        val missesNoEntry: Long,
+        val missesExpired: Long,
         val stored: Long,
     )
 

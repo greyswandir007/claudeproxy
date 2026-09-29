@@ -1,5 +1,6 @@
 package ru.wizard.web.claudeproxy
 
+import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.ObjectMapper
 import io.netty.handler.codec.http.HttpResponseStatus
 import io.netty.util.CharsetUtil
@@ -353,6 +354,106 @@ class ProxyIntegrationTest {
             afterFourth.path("hits").asLong() + afterFourth.path("misses").asLong(),
             afterFourth.path("lookups").asLong(),
         )
+    }
+
+    @Test
+    fun `счётчики кэша повторов разбиваются по публичным моделям`() {
+        fun cacheStats(): JsonNode = objectMapper.readTree(
+            webTestClient.get().uri("/api/request-cache-stats")
+                .exchange().expectStatus().isOk
+                .expectBody(String::class.java).returnResult().responseBody!!,
+        )
+
+        fun perModelRow(stats: JsonNode, model: String): JsonNode? =
+            stats.path("perModel").firstOrNull { it.path("model").asText() == model }
+
+        // запись в кэш асинхронна: ждём, пока счётчик модели доберётся до значения
+        fun awaitModelCounter(model: String, field: String, expectedValue: Long) {
+            val deadline = System.currentTimeMillis() + 10_000
+            while (System.currentTimeMillis() < deadline) {
+                val row = perModelRow(cacheStats(), model)
+                if (row != null && row.path(field).asLong() >= expectedValue) return
+                Thread.sleep(100)
+            }
+            throw AssertionError("request-cache per-model counter '$model.$field' did not reach $expectedValue")
+        }
+
+        fun postMessages(content: String) {
+            webTestClient.post().uri("/v1/messages")
+                .header("x-api-key", SEED_API_KEY)
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(
+                    """{"model":"fake-model","max_tokens":100,
+                        "messages":[{"role":"user","content":"$content"}]}""",
+                )
+                .exchange().expectStatus().isOk
+        }
+
+        // Мок /chat/completions валидирует перевод Claude → OpenAI (system первым,
+        // tool-сообщение из tool_result, tools → function, tool_choice → required),
+        // поэтому запрос на OpenAI-маршрут повторяет форму CLAUDE_REQUEST_WITH_TOOLS
+        // с уникальным текстом (уникальность — чтобы не попасть в чужую запись кэша).
+        fun postOpenAiToolRequest(marker: Long) {
+            webTestClient.post().uri("/v1/messages")
+                .header("x-api-key", SEED_API_KEY)
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(
+                    """{"model":"fake-openai-model","max_tokens":200,
+                       "system":[{"type":"text","text":"Ты помощник. $marker"}],
+                       "tools":[{"name":"get_weather","description":"Погода в городе",
+                                 "input_schema":{"type":"object","properties":{"city":{"type":"string"}}}}],
+                       "tool_choice":{"type":"any"},
+                       "messages":[
+                         {"role":"user","content":"Погода в Париже? $marker"},
+                         {"role":"assistant","content":[
+                            {"type":"text","text":"Смотрю."},
+                            {"type":"tool_use","id":"toolu_1","name":"get_weather","input":{"city":"Paris"}}]},
+                         {"role":"user","content":[
+                            {"type":"tool_result","tool_use_id":"toolu_1","content":[{"type":"text","text":"20C"}]},
+                            {"type":"text","text":"Спасибо"}]}]}""",
+                )
+                .exchange().expectStatus().isOk
+        }
+
+        // счётчики живут с момента старта контекста, поэтому проверяем дельты
+        val before = cacheStats()
+        fun before(model: String, field: String): Long =
+            perModelRow(before, model)?.path(field)?.asLong() ?: 0L
+
+        // два запроса с уникальным содержимым: оба промахиваются (noEntry) и пишутся
+        // в кэш; второй уходит на OpenAI-маршрут — покрываются оба вызова buildCacheKey
+        val marker = System.nanoTime()
+        postMessages("per-model cache counters A $marker")
+        postOpenAiToolRequest(marker)
+
+        awaitModelCounter("fake-model", "stored", before("fake-model", "stored") + 1)
+        awaitModelCounter("fake-openai-model", "stored", before("fake-openai-model", "stored") + 1)
+
+        val after = cacheStats()
+        fun after(model: String, field: String): Long =
+            perModelRow(after, model)?.path(field)?.asLong()
+                ?: throw AssertionError("no per-model diagnostics row for '$model'")
+
+        for (model in listOf("fake-model", "fake-openai-model")) {
+            assertEquals(before(model, "lookups") + 1, after(model, "lookups"), "$model lookups")
+            assertEquals(before(model, "missesNoEntry") + 1, after(model, "missesNoEntry"), "$model missesNoEntry")
+            assertEquals(before(model, "hits"), after(model, "hits"), "$model hits")
+            assertEquals(before(model, "missesExpired"), after(model, "missesExpired"), "$model missesExpired")
+            assertEquals(before(model, "stored") + 1, after(model, "stored"), "$model stored")
+        }
+
+        // инвариант по каждой строке: попадания + промахи = обращения
+        for (row in after.path("perModel")) {
+            assertEquals(
+                row.path("hits").asLong() + row.path("misses").asLong(),
+                row.path("lookups").asLong(),
+                "per-model invariant for ${row.path("model").asText()}",
+            )
+        }
+
+        // контракт сортировки: обращения по убыванию
+        val lookupsByRow = after.path("perModel").map { it.path("lookups").asLong() }
+        assertEquals(lookupsByRow.sortedDescending(), lookupsByRow, "perModel must be sorted by lookups desc")
     }
 
     @Test

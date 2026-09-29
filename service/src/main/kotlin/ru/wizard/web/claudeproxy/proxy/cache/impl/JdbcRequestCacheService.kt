@@ -44,10 +44,16 @@ internal class JdbcRequestCacheService(
     private val missExpiredCount = AtomicLong()
     private val storedCount = AtomicLong()
 
+    /** Те же счётчики в разрезе публичных моделей (ключ — model из тела запроса). */
+    private val perModelCounters = ConcurrentHashMap<String, PerModelCounters>()
+
     override fun buildCacheKey(upstreamPath: String, requestRoot: JsonNode): RequestCacheService.RequestCacheKey {
         // stream и metadata не влияют на содержание ответа — в ключ не входят
         // (см. PLAN.md, бэклог «средние», п.5): стримовый и не-стримовый повтор
         // одного запроса делят одну запись кэша.
+        // model в ключе — публичное имя из тела клиента (маппинг на провайдерское
+        // происходит позже, в мутированной копии), хэширование не меняется.
+        val model = requestRoot.path("model").asText("")
         val keyRoot = if (requestRoot.isObject && (requestRoot.has("stream") || requestRoot.has("metadata"))) {
             (requestRoot as com.fasterxml.jackson.databind.node.ObjectNode).deepCopy()
                 .apply {
@@ -64,12 +70,15 @@ internal class JdbcRequestCacheService(
             hash = digest.joinToString(separator = "") { "%02x".format(it) },
             upstreamPath = upstreamPath,
             canonicalRequest = canonicalRequest,
+            model = model,
         )
     }
 
     override suspend fun lookup(cacheKey: RequestCacheService.RequestCacheKey): RequestCacheService.CachedResponse? =
         databaseProvider.execute {
+            val modelCounters = perModel(cacheKey.model)
             lookupCount.incrementAndGet()
+            modelCounters.lookups.incrementAndGet()
             // expires_at читаем и сравниваем в коде (а не в SQL), чтобы отличить
             // «строки нет» от «строка протухла» — причина промаха для диагностики.
             val cached = jdbcTemplate.query(
@@ -92,16 +101,19 @@ internal class JdbcRequestCacheService(
             when {
                 cached == null -> {
                     missNoEntryCount.incrementAndGet()
+                    modelCounters.missesNoEntry.incrementAndGet()
                     logger.debug { "request cache miss: no entry for path=${cacheKey.upstreamPath}" }
                     null
                 }
                 cached.second <= System.currentTimeMillis() -> {
                     missExpiredCount.incrementAndGet()
+                    modelCounters.missesExpired.incrementAndGet()
                     logger.debug { "request cache miss: entry expired for path=${cacheKey.upstreamPath}" }
                     null
                 }
                 else -> {
                     hitCount.incrementAndGet()
+                    modelCounters.hits.incrementAndGet()
                     // LRU: свежепрочитанная строка считается самой недавно использованной.
                     jdbcTemplate.update(
                         "UPDATE request_cache SET last_accessed_at = ? WHERE cache_key = ? AND upstream_path = ?",
@@ -162,6 +174,7 @@ internal class JdbcRequestCacheService(
                     )
                 }
                 storedCount.incrementAndGet()
+                perModel(entry.cacheKey.model).stored.incrementAndGet()
             } catch (exception: Exception) {
                 logger.warn(exception) { "request cache store failed" }
             }
@@ -194,6 +207,24 @@ internal class JdbcRequestCacheService(
             missesNoEntry = missNoEntryCount.get(),
             missesExpired = missExpiredCount.get(),
             stored = storedCount.get(),
+            perModel = perModelCounters.entries
+                .map { (model, counters) ->
+                    RequestCacheService.RequestCacheModelDiagnostics(
+                        model = model,
+                        lookups = counters.lookups.get(),
+                        hits = counters.hits.get(),
+                        misses = counters.missesNoEntry.get() + counters.missesExpired.get(),
+                        missesNoEntry = counters.missesNoEntry.get(),
+                        missesExpired = counters.missesExpired.get(),
+                        stored = counters.stored.get(),
+                    )
+                }
+                // Убывание lookups, затем модель по алфавиту — детерминированный
+                // порядок строк для дашборда и тестов.
+                .sortedWith(
+                    compareByDescending<RequestCacheService.RequestCacheModelDiagnostics> { it.lookups }
+                        .thenBy { it.model },
+                ),
         )
 
     /** Каноническая сериализация JsonNode: объекты с сортированными ключами. */
@@ -209,4 +240,16 @@ internal class JdbcRequestCacheService(
         node.isArray -> node.joinToString(separator = ",", prefix = "[", postfix = "]") { canonicalJson(it) }
         else -> node.toString()
     }
+
+    /** Счётчики диагностики кэша для одной публичной модели. */
+    private class PerModelCounters {
+        val lookups = AtomicLong()
+        val hits = AtomicLong()
+        val missesNoEntry = AtomicLong()
+        val missesExpired = AtomicLong()
+        val stored = AtomicLong()
+    }
+
+    private fun perModel(model: String): PerModelCounters =
+        perModelCounters.computeIfAbsent(model) { PerModelCounters() }
 }

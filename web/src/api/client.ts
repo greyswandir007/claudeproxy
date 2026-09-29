@@ -426,6 +426,17 @@ export interface ModelRequest {
   priority: number
 }
 
+/** Счётчики диагностики кэша повторов по одной публичной модели. */
+export interface RequestCacheModelStats {
+  model: string
+  lookups: number
+  hits: number
+  misses: number
+  missesNoEntry: number
+  missesExpired: number
+  stored: number
+}
+
 /** Диагностика кэша повторов (счётчики с момента старта сервера). */
 export interface RequestCacheStats {
   lookups: number
@@ -437,6 +448,8 @@ export interface RequestCacheStats {
   missesExpired: number
   /** Записано новых ответов. */
   stored: number
+  /** Те же счётчики в разрезе публичных моделей (по убыванию обращений). */
+  perModel: RequestCacheModelStats[]
 }
 
 export const api = {

@@ -36,6 +36,40 @@ export default function RequestCacheCard({ stats }: { stats: RequestCacheStats |
           </tr>
         </tbody>
       </table>
+      {stats.perModel.length > 0 && (
+        <table className="table">
+          <thead>
+            <tr>
+              <th>модель</th>
+              <th>обращений</th>
+              <th>попаданий</th>
+              <th>доля</th>
+              <th>промахов</th>
+              <th>нет записи</th>
+              <th>запись истекла</th>
+              <th>записано</th>
+            </tr>
+          </thead>
+          <tbody>
+            {stats.perModel.map((row) => (
+              <tr key={row.model}>
+                <td>{row.model}</td>
+                <td>{row.lookups.toLocaleString('ru-RU')}</td>
+                <td>{row.hits.toLocaleString('ru-RU')}</td>
+                <td>
+                  {row.lookups > 0
+                    ? `${Math.round((row.hits / row.lookups) * 100)}%`
+                    : '—'}
+                </td>
+                <td>{row.misses.toLocaleString('ru-RU')}</td>
+                <td>{row.missesNoEntry.toLocaleString('ru-RU')}</td>
+                <td>{row.missesExpired.toLocaleString('ru-RU')}</td>
+                <td>{row.stored.toLocaleString('ru-RU')}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
     </section>
   )
 }
