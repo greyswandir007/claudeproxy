@@ -156,7 +156,7 @@ export default function ModelForm({
             </select>
           </label>
           <label>
-            Приоритет (меньше = выше; fallback при ошибках)
+            Приоритет (меньше = выше; fallback при ошибках; одинаковый приоритет = round-robin)
             <input
               type="number"
               min={1}

@@ -38,8 +38,14 @@ interface ModelRegistry {
     /** Перезагружает снимок из БД (на старте после сида и после каждой мутации). */
     suspend fun reload()
 
-    /** Маршруты модели по возрастанию priority; пусто — модель неизвестна. */
-    fun find(model: String): List<Route>
+    /**
+     * Маршруты модели по возрастанию priority; пусто — модель неизвестна.
+     * Базовый порядок — (priority, id); внутри сегментов подряд идущих равных
+     * (priority, тип провайдера) маршруты чередуются от вызова к вызову
+     * (round-robin). Оценочные пути (count_tokens) передают [rotate] = false,
+     * чтобы не сдвигать курсор ротации: ход Claude Code — count_tokens + messages.
+     */
+    fun find(model: String, rotate: Boolean = true): List<Route>
 
     fun isExposed(model: String): Boolean
 

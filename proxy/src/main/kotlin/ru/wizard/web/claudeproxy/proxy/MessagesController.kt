@@ -69,7 +69,9 @@ class MessagesController(
             throw ApiError(HttpStatus.BAD_REQUEST, "invalid_request_error", "model: Field required")
         }
         keyQuotaService.enforce(exchange, model)
-        val routes = modelRegistry.find(model)
+        // ротацию двигают только реальные completion-запросы: count_tokens не должен
+        // «съедать» шаг round-robin (ход Claude Code = count_tokens + messages)
+        val routes = modelRegistry.find(model, rotate = recordUsage)
         if (routes.isEmpty()) {
             throw ApiError(HttpStatus.NOT_FOUND, "not_found_error", "model: $model not found")
         }

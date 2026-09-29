@@ -26,6 +26,8 @@ class DynamicModelRegistry(
 ) : ModelRegistry {
     private val logger = KotlinLogging.logger {}
 
+    private val roundRobinRouteRotator = RoundRobinRouteRotator()
+
     private data class Snapshot(
         val routesByName: Map<String, List<ModelRegistry.Route>>,
         val exposedNames: Set<String>,
@@ -148,9 +150,11 @@ class DynamicModelRegistry(
         }
     }
 
-    override fun find(model: String): List<ModelRegistry.Route> {
+    override fun find(model: String, rotate: Boolean): List<ModelRegistry.Route> {
         ensureLoaded()
-        return snapshot.routesByName[model] ?: emptyList()
+        val routes = snapshot.routesByName[model] ?: return emptyList()
+        // ротируется копия: снапшот immutable и виден параллельным читателям
+        return if (rotate) roundRobinRouteRotator.rotate(model, routes) else routes
     }
 
     override fun isExposed(model: String): Boolean {
