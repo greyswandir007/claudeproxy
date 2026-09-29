@@ -6,6 +6,8 @@ import org.springframework.stereotype.Service
 import ru.wizard.web.claudeproxy.db.DatabaseProvider
 import ru.wizard.web.claudeproxy.proxy.ApiError
 import ru.wizard.web.claudeproxy.proxy.cache.RequestCacheService
+import ru.wizard.web.claudeproxy.providers.ProviderSettingCatalog
+import ru.wizard.web.claudeproxy.usage.ProviderLimitWindowCalculator
 import ru.wizard.web.claudeproxy.usage.StatsService
 import java.sql.ResultSet
 import java.time.LocalDate
@@ -656,6 +658,7 @@ class JdbcStatsService(
         databaseProvider.execute { providerLimitUsageBlocking() }
 
     private data class ProviderLimitsRow(
+        val id: Long,
         val name: String,
         val window: Long?,
         val week: Long?,
@@ -665,18 +668,47 @@ class JdbcStatsService(
     private fun providerLimitUsageBlocking(): List<StatsService.ProviderLimitUsage> {
         val limitRows = ArrayList<ProviderLimitsRow>()
         jdbcTemplate.query(
-            """SELECT name, limit_window_tokens, limit_week_tokens, limit_month_tokens
+            """SELECT id, name, limit_window_tokens, limit_week_tokens, limit_month_tokens
                FROM provider ORDER BY created_at, id""",
         ) { resultSet ->
-            val window = resultSet.getLong(2).takeIf { !resultSet.wasNull() }
-            val week = resultSet.getLong(3).takeIf { !resultSet.wasNull() }
-            val month = resultSet.getLong(4).takeIf { !resultSet.wasNull() }
+            val window = resultSet.getLong(3).takeIf { !resultSet.wasNull() }
+            val week = resultSet.getLong(4).takeIf { !resultSet.wasNull() }
+            val month = resultSet.getLong(5).takeIf { !resultSet.wasNull() }
             if (window != null || week != null || month != null) {
-                limitRows.add(ProviderLimitsRow(resultSet.getString(1), window, week, month))
+                limitRows.add(ProviderLimitsRow(resultSet.getLong(1), resultSet.getString(2), window, week, month))
+            }
+        }
+        // Настройки периодов лимитов: режим недели, день начала недели и день платёжного периода.
+        val limitPeriodSettings = HashMap<Long, MutableMap<String, String>>()
+        jdbcTemplate.query(
+            "SELECT provider_id, setting_key, setting_value FROM provider_setting",
+        ) { resultSet ->
+            val key = resultSet.getString(2)
+            if (key == ProviderSettingCatalog.LIMIT_WEEK_MODE ||
+                key == ProviderSettingCatalog.LIMIT_WEEK_START_DAY ||
+                key == ProviderSettingCatalog.LIMIT_MONTH_START_DAY
+            ) {
+                limitPeriodSettings.getOrPut(resultSet.getLong(1)) { HashMap() }[key] = resultSet.getString(3)
             }
         }
         val now = System.currentTimeMillis()
+        val zone = ZoneId.systemDefault()
         return limitRows.map { limitsRow ->
+            val periodSettings = limitPeriodSettings[limitsRow.id].orEmpty()
+            val weekMode = periodSettings[ProviderSettingCatalog.LIMIT_WEEK_MODE]
+            val weekSliding = weekMode != ProviderLimitWindowCalculator.WEEK_MODE_FIXED_DAY
+            val monthSliding = !periodSettings.containsKey(ProviderSettingCatalog.LIMIT_MONTH_START_DAY)
+            val weekBounds = ProviderLimitWindowCalculator.weekWindow(
+                weekMode,
+                periodSettings[ProviderSettingCatalog.LIMIT_WEEK_START_DAY],
+                now,
+                zone,
+            )
+            val monthBounds = ProviderLimitWindowCalculator.monthWindow(
+                periodSettings[ProviderSettingCatalog.LIMIT_MONTH_START_DAY]?.toIntOrNull(),
+                now,
+                zone,
+            )
             val providerWindowBounds = windowService.currentProviderWindow(limitsRow.name)
             val windowUsage = windowLimitOf(limitsRow)?.let { effectiveLimit ->
                 val from = providerWindowBounds?.startedAtMilliseconds ?: now
@@ -702,25 +734,25 @@ class JdbcStatsService(
                 )
             }
             val weekUsage = weekLimitOf(limitsRow)?.let { effectiveLimit ->
-                val from = now - 7 * 86_400_000L
                 StatsService.LimitPeriodUsage(
                     limitTokens = effectiveLimit.tokens,
-                    spentTokens = totalsBetween(from, now, null, limitsRow.name).totalTokens(),
-                    fromMilliseconds = from,
-                    toMilliseconds = now,
-                    modelTokens = modelTokensFor(limitsRow.name, from, now),
+                    spentTokens = totalsBetween(weekBounds.first, weekBounds.second, null, limitsRow.name).totalTokens(),
+                    fromMilliseconds = weekBounds.first,
+                    toMilliseconds = weekBounds.second,
+                    modelTokens = modelTokensFor(limitsRow.name, weekBounds.first, weekBounds.second),
                     derived = effectiveLimit.derived,
+                    sliding = weekSliding,
                 )
             }
             val monthUsage = monthLimitOf(limitsRow)?.let { effectiveLimit ->
-                val from = now - 30 * 86_400_000L
                 StatsService.LimitPeriodUsage(
                     limitTokens = effectiveLimit.tokens,
-                    spentTokens = totalsBetween(from, now, null, limitsRow.name).totalTokens(),
-                    fromMilliseconds = from,
-                    toMilliseconds = now,
-                    modelTokens = modelTokensFor(limitsRow.name, from, now),
+                    spentTokens = totalsBetween(monthBounds.first, monthBounds.second, null, limitsRow.name).totalTokens(),
+                    fromMilliseconds = monthBounds.first,
+                    toMilliseconds = monthBounds.second,
+                    modelTokens = modelTokensFor(limitsRow.name, monthBounds.first, monthBounds.second),
                     derived = effectiveLimit.derived,
+                    sliding = monthSliding,
                 )
             }
             StatsService.ProviderLimitUsage(
@@ -779,12 +811,19 @@ class JdbcStatsService(
                 LocalDate.now(zone).atStartOfDay(zone).toInstant().toEpochMilli() to now
             }
 
+            RANGE_WEEK -> {
+                val zone = ZoneId.systemDefault()
+                val today = LocalDate.now(zone)
+                val weekStart = today.minusDays(((today.dayOfWeek.value + 6) % 7).toLong())
+                weekStart.atStartOfDay(zone).toInstant().toEpochMilli() to now
+            }
+
             RANGE_7_DAYS -> (now - 7 * 86_400_000L) to now
             RANGE_30_DAYS -> (now - 30 * 86_400_000L) to now
             else -> throw ApiError(
                 HttpStatus.BAD_REQUEST,
                 "invalid_request_error",
-                "range: ожидается window, today, 7d или 30d",
+                "range: ожидается window, today, week, 7d или 30d",
             )
         }
     }
@@ -893,6 +932,7 @@ class JdbcStatsService(
     private companion object {
         const val RANGE_WINDOW = "window"
         const val RANGE_TODAY = "today"
+        const val RANGE_WEEK = "week"
         const val RANGE_7_DAYS = "7d"
         const val RANGE_30_DAYS = "30d"
 

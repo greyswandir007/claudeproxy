@@ -14,8 +14,22 @@ export default function ProviderLimitBars({ usage }: { usage: ProviderLimitUsage
         ? 'активное окно провайдера'
         : 'окно истекло: расход 0, новое начнётся первым запросом',
     },
-    { title: '7 дней', period: usage.week, note: 'скользящая неделя' },
-    { title: '30 дней', period: usage.month, note: 'скользящий месяц' },
+    {
+      title: 'Неделя',
+      period: usage.week,
+      note:
+        usage.week?.sliding === false
+          ? `календарная неделя, сброс в ${new Date(usage.week.fromMilliseconds).toLocaleDateString('ru-RU', { weekday: 'long' })}`
+          : 'скользящая неделя',
+    },
+    {
+      title: 'Месяц',
+      period: usage.month,
+      note:
+        usage.month?.sliding === false
+          ? `30 дней с ${new Date(usage.month.fromMilliseconds).getDate()}-го числа`
+          : 'скользящий месяц',
+    },
   ].filter((entry) => entry.period !== null)
   if (periods.length === 0) return null
   return (

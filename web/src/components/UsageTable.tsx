@@ -7,7 +7,7 @@ interface MergedRow {
   month: GroupedUsage | null
 }
 
-// Таблица группировки (модели/провайдеры) с двумя периодами: 7 дней и 30 дней.
+// Таблица группировки (модели/провайдеры) с двумя периодами: неделя и 30 дней.
 export default function UsageTable({
   title,
   rowsWeek,
@@ -49,7 +49,7 @@ export default function UsageTable({
           <thead>
             <tr>
               <th rowSpan={2}>{labelTitle}</th>
-              <th colSpan={3} className="numeric">7 дней</th>
+              <th colSpan={3} className="numeric">Неделя</th>
               <th colSpan={2} className="numeric">30 дней</th>
             </tr>
             <tr>

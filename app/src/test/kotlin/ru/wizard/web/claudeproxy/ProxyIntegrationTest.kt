@@ -25,6 +25,9 @@ import reactor.netty.DisposableServer
 import reactor.netty.http.server.HttpServer
 import java.nio.file.Files
 import java.nio.file.Path
+import java.time.LocalDate
+import java.time.YearMonth
+import java.time.ZoneId
 import java.util.UUID
 
 /**
@@ -1402,6 +1405,118 @@ class ProxyIntegrationTest {
         )
 
         webTestClient.delete().uri("/api/providers/$providerId").exchange().expectStatus().isNoContent
+    }
+
+    @Test
+    fun `недельный лимит в режиме фиксированного дня считается от начала недели`() {
+        // провайдер с недельным лимитом в режиме календарной недели с понедельника
+        val createdProvider = webTestClient.post().uri("/api/providers")
+            .contentType(MediaType.APPLICATION_JSON)
+            .bodyValue(
+                """{"name":"fixed-week-limits-provider","type":"openai",
+                    "baseUrl":"http://127.0.0.1:9","apiKey":"x","limitWeekTokens":33600000,
+                    "settingOverrides":{"LIMIT_WEEK_MODE":"FIXED_DAY","LIMIT_WEEK_START_DAY":"MONDAY"}}""",
+            )
+            .exchange().expectStatus().isCreated
+            .expectBody(String::class.java).returnResult().responseBody!!
+        val providerId = objectMapper.readTree(createdProvider).path("id").asLong()
+
+        // граница недели — той же математикой, что и в расчёте лимитов
+        val zone = ZoneId.systemDefault()
+        val today = LocalDate.now(zone)
+        val monday = today.minusDays(((today.dayOfWeek.value + 6) % 7).toLong())
+        val mondayStart = monday.atStartOfDay(zone).toInstant().toEpochMilli()
+
+        // выработка: свежая строка внутри недели и старая за 8 дней до понедельника
+        jdbcTemplate.update(
+            "INSERT INTO usage_event (ts, client_key, provider, model, upstream_model, stream, input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens) VALUES (?,?,?,?,?,0,?,?,?,?)",
+            System.currentTimeMillis() - 60_000L,
+            "integration-key",
+            "fixed-week-limits-provider",
+            "fixed-week-model",
+            "fixed-week-model",
+            100,
+            50,
+            0,
+            7,
+        )
+        jdbcTemplate.update(
+            "INSERT INTO usage_event (ts, client_key, provider, model, upstream_model, stream, input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens) VALUES (?,?,?,?,?,0,?,?,?,?)",
+            mondayStart - 8 * 86_400_000L,
+            "integration-key",
+            "fixed-week-limits-provider",
+            "fixed-week-model",
+            "fixed-week-model",
+            1000,
+            500,
+            0,
+            70,
+        )
+
+        val limitsBody = webTestClient.get().uri("/api/provider-limits")
+            .exchange().expectStatus().isOk
+            .expectBody(String::class.java).returnResult().responseBody!!
+        val usage = objectMapper.readTree(limitsBody)
+            .firstOrNull { it.path("providerName").asText() == "fixed-week-limits-provider" }!!
+        val week = usage.path("week")
+        assertEquals(mondayStart, week.path("fromMilliseconds").asLong())
+        assertEquals(mondayStart + 7 * 86_400_000L, week.path("toMilliseconds").asLong())
+        assertEquals(false, week.path("sliding").asBoolean())
+        // в неделю попадает только свежая строка (157 токенов)
+        assertEquals(157L, week.path("spentTokens").asLong())
+        // месяц без дня платёжного периода — скользящий
+        assertEquals(true, usage.path("month").path("sliding").asBoolean())
+
+        webTestClient.delete().uri("/api/providers/$providerId").exchange().expectStatus().isNoContent
+    }
+
+    @Test
+    fun `месячный лимит с днём начала платёжного периода`() {
+        // провайдер с месячным лимитом и платёжным периодом с 1-го числа
+        val createdProvider = webTestClient.post().uri("/api/providers")
+            .contentType(MediaType.APPLICATION_JSON)
+            .bodyValue(
+                """{"name":"billing-month-limits-provider","type":"openai",
+                    "baseUrl":"http://127.0.0.1:9","apiKey":"x","limitMonthTokens":100000,
+                    "settingOverrides":{"LIMIT_MONTH_START_DAY":"1"}}""",
+            )
+            .exchange().expectStatus().isCreated
+            .expectBody(String::class.java).returnResult().responseBody!!
+        val providerId = objectMapper.readTree(createdProvider).path("id").asLong()
+
+        val zone = ZoneId.systemDefault()
+        val periodStart = YearMonth.from(LocalDate.now(zone)).atDay(1)
+            .atStartOfDay(zone).toInstant().toEpochMilli()
+
+        val limitsBody = webTestClient.get().uri("/api/provider-limits")
+            .exchange().expectStatus().isOk
+            .expectBody(String::class.java).returnResult().responseBody!!
+        val usage = objectMapper.readTree(limitsBody)
+            .firstOrNull { it.path("providerName").asText() == "billing-month-limits-provider" }!!
+        val month = usage.path("month")
+        assertEquals(periodStart, month.path("fromMilliseconds").asLong())
+        assertEquals(periodStart + 30 * 86_400_000L, month.path("toMilliseconds").asLong())
+        assertEquals(false, month.path("sliding").asBoolean())
+        // неделя без режима — скользящая
+        assertEquals(true, usage.path("week").path("sliding").asBoolean())
+
+        webTestClient.delete().uri("/api/providers/$providerId").exchange().expectStatus().isNoContent
+    }
+
+    @Test
+    fun `сводка за диапазон week считает календарную неделю`() {
+        val zone = ZoneId.systemDefault()
+        val today = LocalDate.now(zone)
+        val monday = today.minusDays(((today.dayOfWeek.value + 6) % 7).toLong())
+        val mondayStart = monday.atStartOfDay(zone).toInstant().toEpochMilli()
+
+        val summaryBody = webTestClient.get().uri("/api/summary?range=week")
+            .exchange().expectStatus().isOk
+            .expectBody(String::class.java).returnResult().responseBody!!
+        val summary = objectMapper.readTree(summaryBody)
+        assertEquals("week", summary.path("range").asText())
+        assertEquals(mondayStart, summary.path("fromMilliseconds").asLong())
+        assertTrue(summary.path("toMilliseconds").asLong() >= mondayStart)
     }
 
     @Test

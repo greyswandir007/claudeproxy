@@ -518,17 +518,37 @@ export default function ProviderForm({
                 <span className="override-name" title={SETTING_CATALOG.find((d) => d.key === key)?.description}>
                   {SETTING_CATALOG.find((d) => d.key === key)?.title ?? key}
                 </span>
-                <input
-                  type="text"
-                  className="discovered-public-name"
-                  value={value}
-                  placeholder={
-                    SETTING_CATALOG.find((d) => d.key === key)?.placeholder ?? 'значение'
+                {(() => {
+                  const definition = SETTING_CATALOG.find((d) => d.key === key)
+                  if (definition?.values && definition.values.length > 0) {
+                    return (
+                      <select
+                        className="discovered-public-name"
+                        value={value}
+                        onChange={(event) =>
+                          setSettingOverrides((current) => ({ ...current, [key]: event.target.value }))
+                        }
+                      >
+                        {definition.values.map((variant) => (
+                          <option key={variant} value={variant}>
+                            {variant}
+                          </option>
+                        ))}
+                      </select>
+                    )
                   }
-                  onChange={(event) =>
-                    setSettingOverrides((current) => ({ ...current, [key]: event.target.value }))
-                  }
-                />
+                  return (
+                    <input
+                      type="text"
+                      className="discovered-public-name"
+                      value={value}
+                      placeholder={definition?.placeholder ?? 'значение'}
+                      onChange={(event) =>
+                        setSettingOverrides((current) => ({ ...current, [key]: event.target.value }))
+                      }
+                    />
+                  )
+                })()}
                 <button
                   type="button"
                   className="button button-danger button-small"

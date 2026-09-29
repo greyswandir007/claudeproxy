@@ -10,6 +10,7 @@ export default function PeriodCard({ summary }: { summary: RangeSummary }) {
   const averagePerWindow = totalTokens(summary.totals) / (rangeHours / 5)
   const titles: Record<string, string> = {
     today: 'Сегодня',
+    week: 'Неделя',
     '7d': '7 дней',
     '30d': '30 дней',
   }

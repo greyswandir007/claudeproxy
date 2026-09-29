@@ -6,7 +6,16 @@ package ru.wizard.web.claudeproxy.providers
  */
 object ProviderSettingCatalog {
 
-    enum class ValueType { LONG, DOUBLE, EFFORT_LEVEL, BOOLEAN, NON_EMPTY_TEXT }
+    /** Режим недельного лимита: скользящее окно или календарная неделя от фиксированного дня. */
+    const val LIMIT_WEEK_MODE = "LIMIT_WEEK_MODE"
+
+    /** День недели, с которого начинается календарная неделя недельного лимита. */
+    const val LIMIT_WEEK_START_DAY = "LIMIT_WEEK_START_DAY"
+
+    /** День месяца, с которого начинается 30-дневный платёжный период месячного лимита. */
+    const val LIMIT_MONTH_START_DAY = "LIMIT_MONTH_START_DAY"
+
+    enum class ValueType { LONG, DOUBLE, EFFORT_LEVEL, BOOLEAN, NON_EMPTY_TEXT, ONE_OF }
 
     data class SettingDefinition(
         val key: String,
@@ -14,6 +23,7 @@ object ProviderSettingCatalog {
         val description: String,
         val valueType: ValueType,
         val placeholder: String,
+        val values: List<String> = emptyList(),
     )
 
     val definitions: List<SettingDefinition> = listOf(
@@ -108,6 +118,30 @@ object ProviderSettingCatalog {
             valueType = ValueType.BOOLEAN,
             placeholder = "true",
         ),
+        SettingDefinition(
+            key = LIMIT_WEEK_MODE,
+            title = "Режим недельного лимита",
+            description = "SLIDING — скользящие 7 суток; FIXED_DAY — календарная неделя со сбросом в день из настройки «День начала недели»",
+            valueType = ValueType.ONE_OF,
+            placeholder = "SLIDING",
+            values = listOf("SLIDING", "FIXED_DAY"),
+        ),
+        SettingDefinition(
+            key = LIMIT_WEEK_START_DAY,
+            title = "День начала недели",
+            description = "День недели, с которого начинается календарная неделя; применяется только в режиме FIXED_DAY недельного лимита",
+            valueType = ValueType.ONE_OF,
+            placeholder = "MONDAY",
+            values = listOf("MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY", "SUNDAY"),
+        ),
+        SettingDefinition(
+            key = LIMIT_MONTH_START_DAY,
+            title = "День начала платёжного периода",
+            description = "День месяца, с которого начинается 30-дневный период месячного лимита; в коротких месяцах ограничивается последним днём месяца; без настройки — скользящие 30 суток",
+            valueType = ValueType.ONE_OF,
+            placeholder = "1",
+            values = (1..31).map(Int::toString),
+        ),
     )
 
     private val byKey = definitions.associateBy { it.key }
@@ -141,6 +175,10 @@ object ProviderSettingCatalog {
 
             ValueType.NON_EMPTY_TEXT ->
                 if (trimmed.isEmpty()) "Значение не должно быть пустым" else null
+
+            ValueType.ONE_OF ->
+                if (trimmed in definition.values) null
+                else "Значение должно быть одним из: ${definition.values.joinToString(", ")}"
         }
     }
 

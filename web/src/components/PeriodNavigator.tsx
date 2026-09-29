@@ -46,10 +46,15 @@ const PRESETS: Preset[] = [
     }),
   },
   {
-    id: 'last7days',
-    title: '7 дней',
+    id: 'week',
+    title: 'Неделя',
     rolling: true,
-    range: () => ({ fromMilliseconds: Date.now() - 7 * DAY, toMilliseconds: Date.now() }),
+    range: () => {
+      const monday = new Date()
+      monday.setHours(0, 0, 0, 0)
+      const weekday = (monday.getDay() + 6) % 7 // понедельник = 0
+      return { fromMilliseconds: monday.getTime() - weekday * DAY, toMilliseconds: Date.now() }
+    },
   },
   {
     id: 'previousWeek',

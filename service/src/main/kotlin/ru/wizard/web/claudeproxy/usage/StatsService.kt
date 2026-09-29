@@ -67,7 +67,7 @@ interface StatsService {
 
     /**
      * Диапазоны: window (активное окно ключа, требует key), today (с локальной
-     * полуночи), 7d и 30d (скользящие).
+     * полуночи), week (календарная неделя с понедельника), 7d и 30d (скользящие).
      */
     suspend fun summary(range: String, clientKey: String?): RangeSummary
 
@@ -172,15 +172,17 @@ interface StatsService {
         val modelTokens: List<ModelTokens>,
         /** true — лимит не задан, выведен из другой категории (только отображение). */
         val derived: Boolean,
+        /** true — скользящее окно; false — фиксированный период по настройкам провайдера. */
+        val sliding: Boolean = true,
     )
 
     data class ProviderLimitUsage(
         val providerName: String,
         /** 5-часовое окно провайдера (активное или последнее истекшее); null — лимит не задан. */
         val window: LimitPeriodUsage?,
-        /** Последние 7 дней; null — лимит не задан. */
+        /** Неделя: скользящая либо календарная по настройкам провайдера; null — лимит не задан. */
         val week: LimitPeriodUsage?,
-        /** Последние 30 дней; null — лимит не задан. */
+        /** Месяц: скользящий либо 30 дней от дня платёжного периода; null — лимит не задан. */
         val month: LimitPeriodUsage?,
         /** true — окно активно прямо сейчас; false — показано последнее истекшее. */
         val windowActive: Boolean,

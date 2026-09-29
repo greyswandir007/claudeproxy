@@ -57,11 +57,13 @@ export default function DashboardPage({ refreshTick }: { refreshTick: number }) 
   const [latencyStatistics, setLatencyStatistics] = useState<LatencyStatisticsView | null>(null)
 
   // навигация по периодам
-  const [selectedPreset, setSelectedPreset] = useState('last7days')
-  const [periodRange, setPeriodRange] = useState<PeriodRange>(() => ({
-    fromMilliseconds: Date.now() - 7 * DAY,
-    toMilliseconds: Date.now(),
-  }))
+  const [selectedPreset, setSelectedPreset] = useState('week')
+  const [periodRange, setPeriodRange] = useState<PeriodRange>(() =>
+    rollingPresetRange('week') ?? {
+      fromMilliseconds: Date.now() - 7 * DAY,
+      toMilliseconds: Date.now(),
+    },
+  )
   const [customRange, setCustomRange] = useState<PeriodRange>(() => ({
     fromMilliseconds: dayStart(1),
     toMilliseconds: Date.now(),
@@ -141,13 +143,13 @@ export default function DashboardPage({ refreshTick }: { refreshTick: number }) 
     if (selectedKey === null) return
     const summariesRequest = Promise.all([
       api.summary('today', keyParameter),
-      api.summary('7d', keyParameter),
+      api.summary('week', keyParameter),
       api.summary('30d', keyParameter),
     ])
     const tablesRequest = Promise.all([
-      api.byModel('7d', keyParameter),
+      api.byModel('week', keyParameter),
       api.byModel('30d', keyParameter),
-      api.byProvider('7d', keyParameter),
+      api.byProvider('week', keyParameter),
       api.byProvider('30d', keyParameter),
     ])
     const windowsRequest: Promise<[WindowSummary | null, WindowSummary[]]> = keyParameter

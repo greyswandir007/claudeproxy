@@ -216,8 +216,10 @@ export interface SettingDefinition {
   key: string
   title: string
   description: string
-  valueType: 'LONG' | 'DOUBLE' | 'EFFORT_LEVEL' | 'BOOLEAN' | 'NON_EMPTY_TEXT'
+  valueType: 'LONG' | 'DOUBLE' | 'EFFORT_LEVEL' | 'BOOLEAN' | 'NON_EMPTY_TEXT' | 'ONE_OF'
   placeholder: string
+  /** Допустимые значения для настроек с выбором из списка (valueType ONE_OF). */
+  values?: string[]
 }
 
 export const SETTING_CATALOG: SettingDefinition[] = [
@@ -234,6 +236,9 @@ export const SETTING_CATALOG: SettingDefinition[] = [
   { key: 'DROP_OLD_TOOL_IMAGES', title: 'Экономия: удаление старых картинок', description: 'Старше последних 2 сообщений (~1600 токенов/шт)', valueType: 'BOOLEAN', placeholder: 'true' },
   { key: 'REQUEST_CACHE_TTL_MS', title: 'Экономия: кэш повторов, TTL (мс)', description: 'Точный повтор запроса внутри окна отдаётся из кэша бесплатно; 0 — выключить кэш для провайдера', valueType: 'LONG', placeholder: '600000' },
   { key: 'CONVERT_SYSTEM_MESSAGES_TO_USER', title: 'Совместимость: system → user внутри messages', description: 'Для локальных движков (LM Studio/Qwen): роль system внутри messages конвертируется в user', valueType: 'BOOLEAN', placeholder: 'true' },
+  { key: 'LIMIT_WEEK_MODE', title: 'Режим недельного лимита', description: 'SLIDING — скользящие 7 суток; FIXED_DAY — календарная неделя со сбросом в день из настройки «День начала недели»', valueType: 'ONE_OF', placeholder: 'SLIDING', values: ['SLIDING', 'FIXED_DAY'] },
+  { key: 'LIMIT_WEEK_START_DAY', title: 'День начала недели', description: 'День недели, с которого начинается календарная неделя; применяется только в режиме FIXED_DAY', valueType: 'ONE_OF', placeholder: 'MONDAY', values: ['MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY', 'SUNDAY'] },
+  { key: 'LIMIT_MONTH_START_DAY', title: 'День начала платёжного периода', description: 'День месяца, с которого начинается 30-дневный период месячного лимита; в коротких месяцах ограничивается последним днём месяца; без настройки — скользящие 30 суток', valueType: 'ONE_OF', placeholder: '1', values: Array.from({ length: 31 }, (_, index) => String(index + 1)) },
 ]
 
 export const EFFORT_LEVELS = ['low', 'medium', 'high', 'xhigh', 'max'] as const
@@ -251,6 +256,8 @@ export interface LimitPeriodUsage {
   modelTokens: ModelTokens[]
   /** true — лимит выведен из другой категории (в БД не хранится). */
   derived: boolean
+  /** false — фиксированный период по настройкам провайдера (не скользящее окно). */
+  sliding?: boolean
 }
 
 export interface GroupedTimelinePoint {
