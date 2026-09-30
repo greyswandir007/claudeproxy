@@ -1,0 +1,12 @@
+# Local build defaults appended by scripts/build-local into the jar.
+# The leading document separator makes this the second YAML document:
+# in Spring Boot later documents override earlier ones.
+---
+server:
+  port: 9090
+# The database path resolves against the launch directory.
+# Run the jar from outside the repository to keep the local proxy database
+# out of the project.
+spring:
+  datasource:
+    url: jdbc:sqlite:data/claudeproxy.db
