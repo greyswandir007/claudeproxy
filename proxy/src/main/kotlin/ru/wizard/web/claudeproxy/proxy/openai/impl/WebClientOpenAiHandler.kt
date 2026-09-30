@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode
 import com.fasterxml.jackson.databind.ObjectMapper
 import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.reactor.awaitSingle
+import kotlinx.coroutines.reactor.mono
 import org.springframework.core.ParameterizedTypeReference
 import org.springframework.core.io.buffer.DataBuffer
 import org.springframework.http.HttpHeaders
@@ -108,12 +109,14 @@ class WebClientOpenAiHandler(
                 .contentType(MediaType.TEXT_EVENT_STREAM)
                 .header(HttpHeaders.CACHE_CONTROL, "no-cache")
                 .body(
-                    Flux.defer {
+                    // attemptStream теперь suspend (сжатие tool_result оптимизатором M30) — мост mono
+                    mono {
                         attemptStream(exchange, activeRoutes, 0, requestRoot, recordUsage, clientKey, bearerToken, cacheKey, conversationKey)
-                    }.doFinally {
-                        // single-flight: первый проход завершился (записал ответ или нет)
-                        if (cacheKey != null) requestCacheService.endFlight(cacheKey)
-                    },
+                    }.flatMapMany { streamEvents -> streamEvents }
+                        .doFinally {
+                            // single-flight: первый проход завершился (записал ответ или нет)
+                            if (cacheKey != null) requestCacheService.endFlight(cacheKey)
+                        },
                 )
         } else {
             try {
@@ -284,7 +287,7 @@ class WebClientOpenAiHandler(
         throw IllegalStateException("Список маршрутов пуст")
     }
 
-    private fun attemptStream(
+    private suspend fun attemptStream(
         exchange: ServerWebExchange,
         routes: List<ModelRegistry.Route>,
         index: Int,
@@ -410,7 +413,9 @@ class WebClientOpenAiHandler(
                         "Route '${route.provider.name}/${route.mapping.upstreamName}' failed before " +
                             "first event (${shortError(error)}) - switching to next route"
                     }
-                    attemptStream(exchange, routes, index + 1, requestRoot, recordUsage, clientKey, bearerToken, cacheKey, conversationKey)
+                    mono {
+                        attemptStream(exchange, routes, index + 1, requestRoot, recordUsage, clientKey, bearerToken, cacheKey, conversationKey)
+                    }.flatMapMany { streamEvents -> streamEvents }
                 } else {
                     logger.error(error) { "Stream from provider '${route.provider.name}' aborted" }
                     Flux.just(
@@ -421,7 +426,7 @@ class WebClientOpenAiHandler(
             }
     }
 
-    private fun buildCall(
+    private suspend fun buildCall(
         route: ModelRegistry.Route,
         requestRoot: JsonNode,
         bearerToken: String,

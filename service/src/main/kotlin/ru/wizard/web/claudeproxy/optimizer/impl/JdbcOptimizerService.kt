@@ -95,6 +95,7 @@ class JdbcOptimizerService(
         webClient = WebClient.builder()
             .clientConnector(ReactorClientHttpConnector(httpClient))
             .build()
+        ensureTable()
         loadConfig()
     }
 
@@ -217,6 +218,12 @@ class JdbcOptimizerService(
         val results = ArrayList<OptimizerService.CompressionResult>(texts.size)
         var remainingBudget = optimizerProperties.maxCompressionsPerRequest
         for (text in texts) {
+            if (text.isBlank() || text.length > optimizerProperties.maxInputCharacters) {
+                // пустое и сверхдлинное модель не увидит — сразу маркер, без вызова
+                notCompressedTotal.incrementAndGet()
+                results.add(markerResult(text))
+                continue
+            }
             if (remainingBudget <= 0) {
                 fallbacksTotal.incrementAndGet()
                 results.add(markerResult(text))
@@ -424,6 +431,16 @@ class JdbcOptimizerService(
         }
     }
 
+    /** Создаёт таблицу настройки при первом обращении (идемпотентно, до миграций:
+     *  оптимизатор поднимается раньше раннера миграций на свежей базе). */
+    private fun ensureTable() {
+        try {
+            jdbcTemplate.execute(CREATE_TABLE_SQL)
+        } catch (exception: Exception) {
+            logger.warn(exception) { "Failed to ensure optimizer_config table" }
+        }
+    }
+
     private fun loadConfig() {
         currentConfig = try {
             val row = jdbcTemplate.queryForMap(SELECT_CONFIG_SQL)
@@ -517,6 +534,16 @@ class JdbcOptimizerService(
 
         private val SELECT_CONFIG_SQL =
             "SELECT enabled, provider_name, model FROM optimizer_config WHERE id = 1"
+
+        /** Дубликат V17__optimizer_config.sql (BIGINT вместим и в sqlite, и в postgres). */
+        private const val CREATE_TABLE_SQL =
+            """CREATE TABLE IF NOT EXISTS optimizer_config (
+                 id INTEGER PRIMARY KEY CHECK (id = 1),
+                 enabled INTEGER NOT NULL DEFAULT 0,
+                 provider_name TEXT,
+                 model TEXT,
+                 updated_at BIGINT NOT NULL
+               )"""
         private val UPSERT_CONFIG_SQL =
             """INSERT INTO optimizer_config (id, enabled, provider_name, model, updated_at)
                VALUES (1, ?, ?, ?, ?)

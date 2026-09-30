@@ -4,7 +4,10 @@ import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.databind.node.ArrayNode
 import com.fasterxml.jackson.databind.node.ObjectNode
+import io.github.oshai.kotlinlogging.KotlinLogging
+import kotlinx.coroutines.CancellationException
 import org.springframework.stereotype.Component
+import ru.wizard.web.claudeproxy.optimizer.OptimizerService
 import ru.wizard.web.claudeproxy.routing.ModelRegistry
 import java.security.MessageDigest
 
@@ -13,7 +16,8 @@ import java.security.MessageDigest
  * - CACHE_INJECTION: anthropic — cache_control на конец system и tools, если клиент
  *   не поставил сам; openai — стабильный prompt_cache_key (хэш system+tools).
  * - TRIM_OLD_TOOL_RESULTS: tool_result старше последних KEEP_TOOL_RESULTS
- *   заменяются на «[trimmed]».
+ *   заменяются на «[trimmed]», а при включённой модели-оптимизаторе (M30) —
+ *   осмысленным сжатием (провал оптимизатора = маркер, как раньше).
  * - DROP_OLD_TOOL_IMAGES: image-блоки старше последних KEEP_IMAGE_MESSAGES
  *   заменяются текстовым примечанием (~1600 токенов за картинку).
  *
@@ -21,9 +25,13 @@ import java.security.MessageDigest
  * токенов (символы/4 + 1600 за картинку) — она фиксируется в usage_event.
  */
 @Component
-class TokenSavingAdjuster(private val objectMapper: ObjectMapper) {
+class TokenSavingAdjuster(
+    private val objectMapper: ObjectMapper,
+    private val optimizerService: OptimizerService,
+) {
+    private val logger = KotlinLogging.logger {}
 
-    fun adjust(requestRoot: ObjectNode, provider: ModelRegistry.ProviderInfo): Long {
+    suspend fun adjust(requestRoot: ObjectNode, provider: ModelRegistry.ProviderInfo): Long {
         var savedTokens = 0L
         val overrides = provider.settingOverrides
         if (overrides[CACHE_INJECTION_KEY] == "true") {
@@ -74,8 +82,9 @@ class TokenSavingAdjuster(private val objectMapper: ObjectMapper) {
         return digest.digest().joinToString("") { "%02x".format(it) }.take(24)
     }
 
-    /** tool_result старше последних KEEP_TOOL_RESULTS → «[trimmed]»; возвращает токены. */
-    private fun trimOldToolResults(requestRoot: ObjectNode): Long {
+    /** tool_result старше последних KEEP_TOOL_RESULTS → сжатие оптимизатором
+     *  (M30) либо «[trimmed]»; возвращает сэкономленные токены. */
+    private suspend fun trimOldToolResults(requestRoot: ObjectNode): Long {
         val messages = requestRoot.get("messages") as? ArrayNode ?: return 0
         // индексы tool_result-блоков в порядке следования
         val toolResultIndices = ArrayList<Pair<Int, Int>>() // (сообщение, блок)
@@ -89,21 +98,59 @@ class TokenSavingAdjuster(private val objectMapper: ObjectMapper) {
             }
         }
         if (toolResultIndices.size <= KEEP_TOOL_RESULTS) return 0
-        var savedCharacters = 0L
         val toTrim = toolResultIndices.dropLast(KEEP_TOOL_RESULTS)
-        for ((messageIndex, blockIndex) in toTrim) {
+        val compressionResults = compressWithOptimizer(messages, toTrim)
+        var savedCharacters = 0L
+        for (trimPosition in toTrim.indices) {
+            val (messageIndex, blockIndex) = toTrim[trimPosition]
             val block = (messages.get(messageIndex).get("content") as ArrayNode).get(blockIndex)
-            val content = block.get("content")
-            if (content != null && content.isTextual) {
-                savedCharacters += content.asText().length.toLong()
-            } else if (content != null && content.isArray) {
-                savedCharacters += content.toString().length.toLong()
-            } else if (block.has("content")) {
-                savedCharacters += block.get("content").toString().length.toLong()
+            val originalCharacters = blockContentCharacters(block)
+            val compressedText = compressionResults?.get(trimPosition)?.compressedText
+            if (compressedText != null) {
+                (block as ObjectNode).put("content", compressedText)
+                savedCharacters += (originalCharacters - compressedText.length).coerceAtLeast(0)
+            } else {
+                (block as ObjectNode).put("content", TRIMMED_MARKER)
+                savedCharacters += originalCharacters
             }
-            (block as ObjectNode).put("content", TRIMMED_MARKER)
         }
         return savedCharacters / 4
+    }
+
+    /**
+     * Один батч-запрос к модели-оптимизатору по всем старым текстовым
+     * tool_result; null — оптимизатор недоступен/сломался: блоки уходят
+     * маркером, как в M11. Не имеет права уронить запрос.
+     */
+    private suspend fun compressWithOptimizer(
+        messages: ArrayNode,
+        toTrim: List<Pair<Int, Int>>,
+    ): List<OptimizerService.CompressionResult>? {
+        if (!optimizerService.isAvailable()) return null
+        val texts = ArrayList<String>(toTrim.size)
+        for ((messageIndex, blockIndex) in toTrim) {
+            val content =
+                (messages.get(messageIndex).get("content") as ArrayNode).get(blockIndex).get("content")
+            texts.add(if (content != null && content.isTextual) content.asText() else "")
+        }
+        return try {
+            optimizerService.compressToolResults(texts)
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (exception: Exception) {
+            logger.warn { "optimizer compression failed, using trim marker: ${exception.message}" }
+            null
+        }
+    }
+
+    /** Оценка размера tool_result-блока в символах (для расчёта экономии). */
+    private fun blockContentCharacters(block: JsonNode): Long {
+        val content = block.get("content") ?: return 0L
+        return if (content.isTextual) {
+            content.asText().length.toLong()
+        } else {
+            content.toString().length.toLong()
+        }
     }
 
     /** image-блоки в сообщениях старше последних KEEP_IMAGE_MESSAGES → текст-заметка. */
