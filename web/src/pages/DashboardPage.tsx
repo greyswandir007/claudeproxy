@@ -25,6 +25,7 @@ import LatencyChart from '../components/LatencyChart'
 import ProviderLimitBars from '../components/ProviderLimitBars'
 import RoutingHealth from '../components/RoutingHealth'
 import RequestCacheCard from '../components/RequestCacheCard'
+import OptimizerCard from '../components/OptimizerCard'
 import TimelineChart, { TOTAL_SERIES, pivotGroupedTimeline } from '../components/TimelineChart'
 import UsageTable from '../components/UsageTable'
 import WindowCard from '../components/WindowCard'
@@ -384,6 +385,7 @@ export default function DashboardPage({ refreshTick }: { refreshTick: number }) 
       </div>
       <RoutingHealth report={fallbackReport} cooldowns={routeCooldowns} />
       <RequestCacheCard stats={requestCacheStats} />
+      <OptimizerCard refreshTick={refreshTick} />
       <CostSection providerCosts={providerCosts} />
       {providerLimits.length > 0 && (
         <section className="card dashboard-limits">

@@ -452,6 +452,41 @@ export interface RequestCacheStats {
   perModel: RequestCacheModelStats[]
 }
 
+/** Настройка модели-оптимизатора (M30): сжатие старых tool_result. */
+export interface OptimizerConfigView {
+  enabled: boolean
+  providerName: string | null
+  model: string | null
+}
+
+/** Диагностика модели-оптимизатора (счётчики с момента старта сервера). */
+export interface OptimizerStatsView {
+  enabled: boolean
+  providerName: string | null
+  model: string | null
+  /** CLOSED / OPEN / PROBE / OFF. */
+  circuitState: string
+  /** Блоков предложено сжатию за всё время. */
+  requests: number
+  cacheHits: number
+  /** Успешно сжато блоков. */
+  compressions: number
+  /** «Несжимаемо» (ответ модели короче 80% исходника не считается). */
+  notCompressed: number
+  /** Блоков ушло маркером из-за отказов/таймаутов/бюджета. */
+  fallbacks: number
+  failures: number
+  charactersBefore: number
+  charactersAfter: number
+  /** Оценка сэкономленных токенов: (символы до − после) / 4. */
+  estimatedTokensSaved: number
+  /** Токены, потраченные самой моделью-оптимизатором. */
+  modelTokensSpent: number
+  averageLatencyMilliseconds: number
+  maxLatencyMilliseconds: number
+  lastError: string | null
+}
+
 export const api = {
   summary: (range: string, key: string | null) =>
     getJson<RangeSummary>(`/api/summary?range=${range}${key ? `&key=${encodeURIComponent(key)}` : ''}`),
@@ -485,6 +520,13 @@ export const api = {
   latency: (bucket: 'hour' | 'day', from: number, to: number) =>
     getJson<LatencyStatisticsView>(`/api/latency?bucket=${bucket}&from=${from}&to=${to}`),
   requestCacheStats: () => getJson<RequestCacheStats>('/api/request-cache-stats'),
+  optimizerStats: () => getJson<OptimizerStatsView>('/api/optimizer/stats'),
+  optimizerConfig: () => getJson<OptimizerConfigView>('/api/optimizer/config'),
+  updateOptimizerConfig: (request: {
+    enabled: boolean
+    providerName: string | null
+    model: string | null
+  }) => putJson<OptimizerConfigView>('/api/optimizer/config', request),
   groupedTimeline: (
     bucket: 'hour' | 'day',
     key: string | null,

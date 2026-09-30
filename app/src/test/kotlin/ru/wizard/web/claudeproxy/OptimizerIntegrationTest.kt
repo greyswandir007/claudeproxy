@@ -331,4 +331,49 @@ class OptimizerIntegrationTest {
         assertTrue(elapsedMilliseconds < 5_000, "elapsed $elapsedMilliseconds ms")
         assertTrue(mainUpstreamBodies.single().contains("[trimmed by claudeproxy]"))
     }
+
+    @Test
+    fun `настройка через API - валидация и чтение`() {
+        // при выключенной фиче оба эндпоинта доступны
+        webTestClient.get().uri("/api/optimizer/stats")
+            .exchange()
+            .expectStatus().isOk
+            .expectBody()
+            .jsonPath("$.circuitState").isEqualTo("OFF")
+        webTestClient.get().uri("/api/optimizer/config")
+            .exchange()
+            .expectStatus().isOk
+            .expectBody()
+            .jsonPath("$.enabled").isEqualTo(false)
+
+        // несуществующий провайдер -> 400
+        webTestClient.put().uri("/api/optimizer/config")
+            .contentType(MediaType.APPLICATION_JSON)
+            .bodyValue(mapOf("enabled" to true, "providerName" to "ghost", "model" to "some-model"))
+            .exchange()
+            .expectStatus().isBadRequest
+        // enabled без модели -> 400
+        webTestClient.put().uri("/api/optimizer/config")
+            .contentType(MediaType.APPLICATION_JSON)
+            .bodyValue(mapOf("enabled" to true, "providerName" to "optimizer-provider", "model" to ""))
+            .exchange()
+            .expectStatus().isBadRequest
+
+        // валидная настройка сохраняется и читается обратно
+        webTestClient.put().uri("/api/optimizer/config")
+            .contentType(MediaType.APPLICATION_JSON)
+            .bodyValue(
+                mapOf("enabled" to true, "providerName" to "optimizer-provider", "model" to "optimizer-model"),
+            )
+            .exchange()
+            .expectStatus().isOk
+            .expectBody()
+            .jsonPath("$.enabled").isEqualTo(true)
+            .jsonPath("$.providerName").isEqualTo("optimizer-provider")
+            .jsonPath("$.model").isEqualTo("optimizer-model")
+        assertEquals(
+            OptimizerService.OptimizerConfig(true, "optimizer-provider", "optimizer-model"),
+            optimizerService.config(),
+        )
+    }
 }
