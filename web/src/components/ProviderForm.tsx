@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import {
   api,
   EFFORT_LEVELS,
@@ -64,6 +64,8 @@ export default function ProviderForm({
   const [name, setName] = useState(provider?.name ?? '')
   const [type, setType] = useState(provider?.type ?? 'openai')
   const [baseUrl, setBaseUrl] = useState(provider?.baseUrl ?? '')
+  const [proxyName, setProxyName] = useState(provider?.proxyName ?? '')
+  const [availableProxies, setAvailableProxies] = useState<string[]>([])
   const [apiKey, setApiKey] = useState('')
   const [extraHeaderRows, setExtraHeaderRows] = useState(
     Object.entries(provider?.extraHeaders ?? {}).map(([key, value]) => ({ key, value })),
@@ -170,6 +172,14 @@ export default function ProviderForm({
       Object.fromEntries(discoveredModels.map((upstream) => [upstream, false])),
     )
 
+  // список прокси для дропдауна (M31)
+  useEffect(() => {
+    api
+      .listProxies()
+      .then((loaded) => setAvailableProxies(loaded.map((proxy) => proxy.name)))
+      .catch(() => setAvailableProxies([]))
+  }, [])
+
   const save = () => {
     setSaving(true)
     setError(null)
@@ -215,6 +225,7 @@ export default function ProviderForm({
               pricePerMillionTokens: null,
             }
           : { pricingMode: '', pricePerMillionTokens: null, priceMonthly: null }),
+      proxyName: proxyName.length > 0 ? proxyName : '',
     }
     const result = isEditMode
       ? api.updateProvider(provider.id, request)
@@ -286,6 +297,17 @@ export default function ProviderForm({
             placeholder="https://openrouter.ai/api/v1"
             onChange={(event) => setBaseUrl(event.target.value)}
           />
+        </label>
+        <label className="form-wide">
+          Прокси (M31)
+          <select value={proxyName} onChange={(event) => setProxyName(event.target.value)}>
+            <option value="">— без прокси —</option>
+            {availableProxies.map((name) => (
+              <option key={name} value={name}>
+                {name}
+              </option>
+            ))}
+          </select>
         </label>
         <label className="form-wide">
           Авторизация

@@ -166,6 +166,8 @@ export interface ManagedProvider {
   pricingMode: string
   pricePerMillionTokens: number | null
   priceMonthly: number | null
+  /** Прокси-эндпоинт провайдера (M31); null — прямое соединение. */
+  proxyName: string | null
   authType: 'api_key' | 'oauth'
   oauthGrant: 'client_credentials' | 'refresh_token'
   oauthClientId: string
@@ -174,6 +176,35 @@ export interface ManagedProvider {
   models: ManagedModel[]
   createdAt: number
   updatedAt: number
+}
+
+/** Прокси/туннель доступа к провайдерам (M31). */
+export interface ProxyEndpoint {
+  id: number
+  name: string
+  /** HTTP | HTTPS | SOCKS4 | SOCKS5. */
+  type: string
+  host: string
+  port: number
+  username: string | null
+  hasPassword: boolean
+  enabled: boolean
+  lastCheckStatus: string | null
+  lastCheckAt: number | null
+  providerNames: string[]
+  createdAt: number
+  updatedAt: number
+}
+
+/** Запрос создания/обновления прокси; пароль пусто = не менять. */
+export interface ProxyRequest {
+  name?: string
+  type?: string
+  host?: string
+  port?: number
+  username?: string
+  password?: string
+  enabled?: boolean
 }
 
 export interface ProviderRequest {
@@ -198,6 +229,7 @@ export interface ProviderRequest {
   pricingMode?: string
   pricePerMillionTokens?: number | null
   priceMonthly?: number | null
+  proxyName?: string | null
 }
 
 export interface ProviderCost {
@@ -556,6 +588,13 @@ export const api = {
     ),
   config: () => getJson<ProxyConfig>('/api/config'),
   keys: () => getJson<ClientKey[]>('/api/keys'),
+  listProxies: () => getJson<ProxyEndpoint[]>('/api/proxies'),
+  createProxy: (request: ProxyRequest) => postJson<ProxyEndpoint>('/api/proxies', request),
+  updateProxy: (id: number, request: ProxyRequest) =>
+    putJson<ProxyEndpoint>(`/api/proxies/${id}`, request),
+  deleteProxy: (id: number) => deleteRequest(`/api/proxies/${id}`),
+  checkProxy: (id: number, testUrl?: string) =>
+    postJson<ProxyEndpoint>(`/api/proxies/${id}/check`, testUrl ? { testUrl } : {}),
   createKey: (request: KeyRequest) => postJson<CreatedKey>('/api/keys', request),
   updateKey: (id: number, request: KeyRequest) =>
     putJson<ClientKey>(`/api/keys/${id}`, request),
