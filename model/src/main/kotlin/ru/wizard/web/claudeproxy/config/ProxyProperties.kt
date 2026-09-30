@@ -19,6 +19,7 @@ class ProxyProperties(
     var requestCache: RequestCache = RequestCache(),
     var conversationAffinity: ConversationAffinity = ConversationAffinity(),
     var tokenCalibration: TokenCalibration = TokenCalibration(),
+    var optimizer: Optimizer = Optimizer(),
     var serverEvent: ServerEvent = ServerEvent(),
     var backup: Backup = Backup(),
 ) {
@@ -106,5 +107,21 @@ class ProxyProperties(
         var enabled: Boolean = true,
         /** Минимальное число накопленных запросов, после которого коэффициент применяется. */
         var minimumSamples: Long = 20,
+    )
+
+    /** Технические ручки модели-оптимизатора (M30). Сам выбор провайдера и
+     *  модели — runtime-настройка optimizer_config в БД (меняется из дашборда),
+     *  здесь только параметры вызовов. */
+    class Optimizer(
+        /** Жёсткий таймаут одного запроса к модели-оптимизатору. */
+        var requestTimeoutMilliseconds: Long = 15_000,
+        /** Лимит max_tokens ответа модели при сжатии. */
+        var maxCompletionTokens: Int = 1_024,
+        /** Контент длиннее не отправляется модели — сразу маркер, как в M11. */
+        var maxInputCharacters: Int = 65_536,
+        /** Сколько блоков за один запрос разрешено сжимать (бюджет латентности). */
+        var maxCompressionsPerRequest: Int = 3,
+        /** Ёмкость LRU-кэша сжатий по SHA-256 контента. */
+        var maxCacheEntries: Int = 256,
     )
 }
