@@ -2,7 +2,6 @@ package ru.wizard.web.claudeproxy.optimizer.impl
 
 import com.fasterxml.jackson.databind.ObjectMapper
 import io.github.oshai.kotlinlogging.KotlinLogging
-import io.netty.channel.ChannelOption
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.TimeoutCancellationException
@@ -11,18 +10,15 @@ import kotlinx.coroutines.reactor.awaitSingle
 import org.springframework.beans.factory.InitializingBean
 import org.springframework.core.env.Environment
 import org.springframework.http.HttpHeaders
-import org.springframework.http.client.reactive.ReactorClientHttpConnector
 import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.stereotype.Service
-import org.springframework.web.reactive.function.client.WebClient
-import reactor.netty.http.client.HttpClient
 import ru.wizard.web.claudeproxy.config.EnvironmentReferenceResolver
 import ru.wizard.web.claudeproxy.config.ProxyProperties
 import ru.wizard.web.claudeproxy.db.DatabaseProvider
 import ru.wizard.web.claudeproxy.optimizer.OptimizerService
+import ru.wizard.web.claudeproxy.providers.UpstreamWebClientFactory
 import java.net.URI
 import java.security.MessageDigest
-import java.time.Duration
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
@@ -39,6 +35,7 @@ class JdbcOptimizerService(
     private val jdbcTemplate: JdbcTemplate,
     private val databaseProvider: DatabaseProvider,
     private val proxyProperties: ProxyProperties,
+    private val webClientFactory: UpstreamWebClientFactory,
     private val environment: Environment,
     private val objectMapper: ObjectMapper,
 ) : OptimizerService, InitializingBean {
@@ -47,7 +44,6 @@ class JdbcOptimizerService(
 
     /** Параметры вызова — фиксируются на старте (см. application.example.yml). */
     private val optimizerProperties = proxyProperties.optimizer
-    private lateinit var webClient: WebClient
 
     /** Снимок настройки optimizer_config; обновляется на старте и из updateConfig. */
     @Volatile
@@ -86,15 +82,10 @@ class JdbcOptimizerService(
         val apiKeyReference: String,
         val authType: String,
         val extraHeaders: Map<String, String>,
+        val proxyName: String?,
     )
 
     override fun afterPropertiesSet() {
-        val httpClient = HttpClient.create()
-            .responseTimeout(Duration.ofMillis(optimizerProperties.requestTimeoutMilliseconds))
-            .option(ChannelOption.CONNECT_TIMEOUT_MILLIS, 5_000)
-        webClient = WebClient.builder()
-            .clientConnector(ReactorClientHttpConnector(httpClient))
-            .build()
         ensureTable()
         loadConfig()
     }
@@ -312,23 +303,27 @@ class JdbcOptimizerService(
     private suspend fun callModel(text: String, provider: ProviderRow): ModelOutcome? {
         return try {
             val requestJson = buildRequestJson(provider, text)
-            val responseBody = webClient
-                .post()
-                .uri(URI.create(provider.baseUrl.trimEnd('/') + completionPath(provider)))
-                .headers { headers -> applyAuthHeaders(headers, provider) }
-                .bodyValue(requestJson)
-                .retrieve()
-                .onStatus({ it.isError }) { response ->
-                    response.bodyToMono(String::class.java)
-                        .defaultIfEmpty("")
-                        .map { body ->
-                            IllegalStateException(
-                                "optimizer provider error ${response.statusCode().value()}: ${body.take(200)}",
-                            )
-                        }
-                }
-                .bodyToMono(String::class.java)
-                .awaitSingle()
+            // таймаут вызова: у клиентов фабрики нет коннекторного responseTimeout,
+            // поэтому режем здесь (плюс общий бюджет батча в compressToolResults)
+            val responseBody = withTimeout(optimizerProperties.requestTimeoutMilliseconds + 1_000) {
+                webClientFactory.webClient(provider.proxyName)
+                    .post()
+                    .uri(URI.create(provider.baseUrl.trimEnd('/') + completionPath(provider)))
+                    .headers { headers -> applyAuthHeaders(headers, provider) }
+                    .bodyValue(requestJson)
+                    .retrieve()
+                    .onStatus({ it.isError }) { response ->
+                        response.bodyToMono(String::class.java)
+                            .defaultIfEmpty("")
+                            .map { body ->
+                                IllegalStateException(
+                                    "optimizer provider error ${response.statusCode().value()}: ${body.take(200)}",
+                                )
+                            }
+                    }
+                    .bodyToMono(String::class.java)
+                    .awaitSingle()
+            }
             parseModelOutcome(responseBody, provider)
         } catch (exception: CancellationException) {
             throw exception
@@ -403,7 +398,7 @@ class JdbcOptimizerService(
     private fun providerRow(name: String): ProviderRow? {
         return try {
             jdbcTemplate.queryForObject(
-                """SELECT name, type, base_url, api_key, auth_type, extra_headers
+                """SELECT name, type, base_url, api_key, auth_type, extra_headers, proxy_name
                    FROM provider WHERE name = ?""",
                 { resultSet, _ ->
                     ProviderRow(
@@ -413,6 +408,7 @@ class JdbcOptimizerService(
                         apiKeyReference = resultSet.getString("api_key").orEmpty(),
                         authType = resultSet.getString("auth_type").ifBlank { "api_key" },
                         extraHeaders = parseExtraHeaders(resultSet.getString("extra_headers")),
+                        proxyName = resultSet.getString("proxy_name")?.takeIf { it.isNotBlank() },
                     )
                 },
                 name,

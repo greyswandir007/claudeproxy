@@ -17,6 +17,7 @@ import org.springframework.util.MultiValueMap
 import org.springframework.web.reactive.function.BodyInserter
 import org.springframework.web.reactive.function.BodyInserters
 import org.springframework.web.reactive.function.client.WebClient
+import ru.wizard.web.claudeproxy.providers.UpstreamWebClientFactory
 import org.springframework.web.server.ServerWebExchange
 import org.springframework.web.util.UriComponentsBuilder
 import reactor.core.publisher.Flux
@@ -47,7 +48,7 @@ import java.nio.charset.StandardCharsets.UTF_8
  */
 @Service
 class WebClientAnthropicHandler(
-    private val webClient: WebClient,
+    private val webClientFactory: UpstreamWebClientFactory,
     private val objectMapper: ObjectMapper,
     private val usageRecorder: UsageRecorder,
     private val requestAdjuster: ProviderRequestAdjuster,
@@ -160,7 +161,7 @@ class WebClientAnthropicHandler(
     }
 
     /** Запрос в один провайдер без retry: статус и тело upstream уходят клиенту как есть. */
-    private fun buildPassthroughCall(
+    private suspend fun buildPassthroughCall(
         exchange: ServerWebExchange,
         route: ModelRegistry.Route,
         method: HttpMethod,
@@ -175,7 +176,8 @@ class WebClientAnthropicHandler(
         query?.forEach { (name, values) ->
             values.forEach { value -> uriBuilder.queryParam(name, value) }
         }
-        val requestSpecification = webClient.method(method).uri(uriBuilder.encode().build().toUri())
+        val requestSpecification =
+            webClientFactory.webClient(provider.proxyName).method(method).uri(uriBuilder.encode().build().toUri())
         if (contentType != null) {
             requestSpecification.contentType(contentType)
         }
@@ -475,7 +477,7 @@ class WebClientAnthropicHandler(
         }
         requestAdjuster.adjust(rewrittenRequest, provider)
         val savedTokens = tokenSavingAdjuster.adjust(rewrittenRequest, provider)
-        val requestSpecification = webClient.post()
+        val requestSpecification = webClientFactory.webClient(provider.proxyName).post()
             .uri(provider.baseUrl.trimEnd('/') + upstreamPath)
             .contentType(MediaType.APPLICATION_JSON)
         if (authorizationHeader != null) {

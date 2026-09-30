@@ -23,6 +23,8 @@ interface ModelRegistry {
         val effortMapping: Map<String, String>,
         /** Оверрайды входных параметров (ключи из ProviderSettingCatalog). */
         val settingOverrides: Map<String, String>,
+        /** Прокси-эндпоинт для исходящих вызовов этого провайдера (M31); null — напрямую. */
+        val proxyName: String? = null,
     )
 
     data class ModelInfo(

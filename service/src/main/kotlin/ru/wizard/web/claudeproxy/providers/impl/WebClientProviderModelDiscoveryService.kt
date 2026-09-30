@@ -13,6 +13,7 @@ import org.springframework.web.reactive.function.client.WebClient
 import ru.wizard.web.claudeproxy.config.EnvironmentReferenceResolver
 import ru.wizard.web.claudeproxy.db.DatabaseProvider
 import ru.wizard.web.claudeproxy.providers.ProviderModelDiscoveryService
+import ru.wizard.web.claudeproxy.providers.UpstreamWebClientFactory
 import ru.wizard.web.claudeproxy.proxy.ApiError
 
 /**
@@ -21,7 +22,7 @@ import ru.wizard.web.claudeproxy.proxy.ApiError
  */
 @Service
 class WebClientProviderModelDiscoveryService(
-    private val webClient: WebClient,
+    private val webClientFactory: UpstreamWebClientFactory,
     private val databaseProvider: DatabaseProvider,
     private val jdbcTemplate: JdbcTemplate,
     private val environment: Environment,
@@ -37,7 +38,8 @@ class WebClientProviderModelDiscoveryService(
             throw ApiError(HttpStatus.BAD_REQUEST, "invalid_request_error", "baseUrl обязателен")
         }
         val apiKey = resolveApiKey(request)
-        val requestSpecification = webClient.get()
+        val proxyName = resolveProxyName(request)
+        val requestSpecification = webClientFactory.webClient(proxyName).get()
             .uri(
                 request.baseUrl.trimEnd('/') +
                     if (request.type == "anthropic") "/v1/models" else "/models",
@@ -66,6 +68,18 @@ class WebClientProviderModelDiscoveryService(
         val models = parseModelIdentifiers(responseBody)
         logger.info { "Discovery ${request.type} ${request.baseUrl}: found ${models.size} models" }
         return models
+    }
+
+    /** Прокси discovery берёт у провайдера (если провайдер указан), M31. */
+    private suspend fun resolveProxyName(request: ProviderModelDiscoveryService.DiscoveryRequest): String? {
+        if (request.providerId == null) return null
+        return databaseProvider.execute {
+            jdbcTemplate.query(
+                "SELECT proxy_name FROM provider WHERE id = ?",
+                { resultSet, _ -> resultSet.getString(1)?.takeIf { it.isNotBlank() } },
+                request.providerId,
+            ).firstOrNull()
+        }
     }
 
     private suspend fun resolveApiKey(request: ProviderModelDiscoveryService.DiscoveryRequest): String {

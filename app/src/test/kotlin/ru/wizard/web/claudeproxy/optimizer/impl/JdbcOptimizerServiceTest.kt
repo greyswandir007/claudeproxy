@@ -20,6 +20,7 @@ import reactor.netty.http.server.HttpServer
 import ru.wizard.web.claudeproxy.config.ProxyProperties
 import ru.wizard.web.claudeproxy.db.DatabaseProvider
 import ru.wizard.web.claudeproxy.optimizer.OptimizerService
+import ru.wizard.web.claudeproxy.providers.impl.DefaultUpstreamWebClientFactory
 import java.nio.file.Path
 import java.time.Duration
 import java.util.concurrent.atomic.AtomicInteger
@@ -62,7 +63,8 @@ class JdbcOptimizerServiceTest {
                  base_url TEXT NOT NULL,
                  api_key TEXT NOT NULL,
                  auth_type TEXT NOT NULL DEFAULT 'api_key',
-                 extra_headers TEXT
+                 extra_headers TEXT,
+                 proxy_name TEXT
                )""",
         )
         jdbcTemplate.execute(
@@ -74,11 +76,32 @@ class JdbcOptimizerServiceTest {
                  updated_at BIGINT NOT NULL
                )""",
         )
+        jdbcTemplate.execute(
+            """CREATE TABLE proxy_endpoint (
+                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                 name TEXT NOT NULL UNIQUE,
+                 type TEXT NOT NULL,
+                 host TEXT NOT NULL,
+                 port INTEGER NOT NULL,
+                 username TEXT,
+                 password TEXT,
+                 enabled INTEGER NOT NULL DEFAULT 1,
+                 last_check_status TEXT,
+                 last_check_at INTEGER,
+                 created_at INTEGER NOT NULL,
+                 updated_at INTEGER NOT NULL
+               )""",
+        )
         proxyProperties = ProxyProperties()
         service = JdbcOptimizerService(
             jdbcTemplate = jdbcTemplate,
             databaseProvider = testDatabaseProvider,
             proxyProperties = proxyProperties,
+            webClientFactory = DefaultUpstreamWebClientFactory(
+                jdbcTemplate = jdbcTemplate,
+                databaseProvider = testDatabaseProvider,
+                environment = MockEnvironment(),
+            ),
             environment = MockEnvironment(),
             objectMapper = ObjectMapper(),
         )

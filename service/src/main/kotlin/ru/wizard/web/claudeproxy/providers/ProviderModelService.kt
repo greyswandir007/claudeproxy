@@ -34,6 +34,8 @@ interface ProviderModelService {
         val pricePerMillionTokens: Double?,
         /** $ за месяц подписки (только при pricingMode=monthly). */
         val priceMonthly: Double?,
+        /** Прокси-эндпоинт провайдера (M31); null — прямое соединение. */
+        val proxyName: String?,
         val models: List<ModelView>,
         val createdAt: Long,
         val updatedAt: Long,
@@ -82,6 +84,8 @@ interface ProviderModelService {
         val pricingMode: String? = null,
         val pricePerMillionTokens: Double? = null,
         val priceMonthly: Double? = null,
+        /** Прокси-эндпоинт (M31): null/'' — без прокси; имя должно существовать. */
+        val proxyName: String? = null,
     )
 
     data class ModelRequest(

@@ -16,6 +16,7 @@ import org.springframework.web.reactive.function.client.WebClient
 import ru.wizard.web.claudeproxy.config.EnvironmentReferenceResolver
 import ru.wizard.web.claudeproxy.db.DatabaseProvider
 import ru.wizard.web.claudeproxy.providers.ProviderOAuthTokenService
+import ru.wizard.web.claudeproxy.providers.UpstreamWebClientFactory
 import ru.wizard.web.claudeproxy.proxy.ApiError
 import ru.wizard.web.claudeproxy.routing.ModelRegistry
 import java.time.Duration
@@ -28,7 +29,7 @@ import java.time.Duration
  */
 @Service
 class WebClientProviderOAuthTokenService(
-    private val webClient: WebClient,
+    private val webClientFactory: UpstreamWebClientFactory,
     private val databaseProvider: DatabaseProvider,
     private val jdbcTemplate: JdbcTemplate,
     private val environment: Environment,
@@ -94,7 +95,7 @@ class WebClientProviderOAuthTokenService(
         if (config.grant == GRANT_REFRESH_TOKEN) {
             formValues["refresh_token"] = config.refreshToken
         }
-        val response = webClient.post()
+        val response = webClientFactory.webClient(provider.proxyName).post()
             .uri(config.tokenUrl)
             .contentType(MediaType.APPLICATION_FORM_URLENCODED)
             .accept(MediaType.APPLICATION_JSON)

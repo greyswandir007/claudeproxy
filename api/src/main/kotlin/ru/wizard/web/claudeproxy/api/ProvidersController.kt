@@ -144,6 +144,7 @@ class ProvidersController(
                 .takeIf { it.isNumber && it.asDouble() > 0 }?.asDouble(),
             priceMonthly = node.path("priceMonthly")
                 .takeIf { it.isNumber && it.asDouble() > 0 }?.asDouble(),
+            proxyName = node.path("proxyName").takeIf { it.isTextual }?.asText(),
         )
     }
 

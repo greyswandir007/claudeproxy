@@ -14,6 +14,7 @@ import org.springframework.http.ResponseEntity
 import org.springframework.http.codec.ServerSentEvent
 import org.springframework.stereotype.Service
 import org.springframework.web.reactive.function.client.WebClient
+import ru.wizard.web.claudeproxy.providers.UpstreamWebClientFactory
 import org.springframework.web.server.ServerWebExchange
 import reactor.core.publisher.Flux
 import reactor.core.publisher.SignalType
@@ -43,7 +44,7 @@ import java.nio.charset.StandardCharsets.UTF_8
  */
 @Service
 class WebClientOpenAiHandler(
-    private val webClient: WebClient,
+    private val webClientFactory: UpstreamWebClientFactory,
     private val objectMapper: ObjectMapper,
     private val usageRecorder: UsageRecorder,
     private val requestAdjuster: ProviderRequestAdjuster,
@@ -436,7 +437,7 @@ class WebClientOpenAiHandler(
         requestAdjuster.adjust(adjustedRoot, provider)
         val savedTokens = tokenSavingAdjuster.adjust(adjustedRoot, provider)
         val translatedRequest = requestTranslator.translate(adjustedRoot, route)
-        val requestSpecification = webClient.post()
+        val requestSpecification = webClientFactory.webClient(provider.proxyName).post()
             .uri(provider.baseUrl.trimEnd('/') + "/chat/completions")
             .contentType(MediaType.APPLICATION_JSON)
             .header(HttpHeaders.AUTHORIZATION, "Bearer $bearerToken")

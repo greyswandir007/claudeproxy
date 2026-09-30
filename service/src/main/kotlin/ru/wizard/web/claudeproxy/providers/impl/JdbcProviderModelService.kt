@@ -87,6 +87,7 @@ class JdbcProviderModelService(
         val created = databaseProvider.execute {
             validateProviderRequest(request)
             requireUniqueProviderName(request.name)
+            requireProxyNameExists(request.proxyName)
             val now = System.currentTimeMillis()
             validateEffortMapping(request.effortMapping)
             validateSettingOverrides(request.settingOverrides)
@@ -96,9 +97,9 @@ class JdbcProviderModelService(
                     limit_window_tokens, limit_week_tokens, limit_month_tokens,
                     effort_mapping, auth_type, oauth_grant, oauth_client_id,
                     oauth_client_secret, oauth_token_url, oauth_scopes, oauth_refresh_token,
-                    pricing_mode, price_per_million_tokens, price_monthly,
+                    pricing_mode, price_per_million_tokens, price_monthly, proxy_name,
                     created_at, updated_at)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 request.name,
                 request.type,
                 request.baseUrl,
@@ -119,6 +120,7 @@ class JdbcProviderModelService(
                 request.pricingMode ?: "",
                 request.pricePerMillionTokens,
                 request.priceMonthly,
+                request.proxyName?.trim()?.takeIf { it.isNotEmpty() },
                 now,
                 now,
             )
@@ -147,12 +149,14 @@ class JdbcProviderModelService(
             val updateApiKey = !request.apiKey.isNullOrBlank()
             validateEffortMapping(request.effortMapping)
             validateSettingOverrides(request.settingOverrides)
+            requireProxyNameExists(request.proxyName)
             jdbcTemplate.update(
                 """UPDATE provider SET name = ?, type = ?, base_url = ?, extra_headers = ?,
                    limit_window_tokens = ?, limit_week_tokens = ?, limit_month_tokens = ?,
                    effort_mapping = ?, auth_type = ?, oauth_grant = ?, oauth_client_id = ?,
                    oauth_token_url = ?, oauth_scopes = ?,
-                   pricing_mode = ?, price_per_million_tokens = ?, price_monthly = ?""" +
+                   pricing_mode = ?, price_per_million_tokens = ?, price_monthly = ?,
+                   proxy_name = ?""" +
                     (if (request.oauthClientSecret != null && request.oauthClientSecret.isNotBlank()) ", oauth_client_secret = ?" else "") +
                     (if (request.oauthRefreshToken != null && request.oauthRefreshToken.isNotBlank()) ", oauth_refresh_token = ?" else "") +
                     (if (request.exposed != null) ", exposed = ?" else "") +
@@ -323,6 +327,19 @@ class JdbcProviderModelService(
     }
 
     /** Аргументы UPDATE provider в порядке SET-плейсхолдеров (лимиты и маппер перезаписываются). */
+    /** Прокси у провайдера должен существовать (M31); пустое имя — без прокси. */
+    private fun requireProxyNameExists(proxyName: String?) {
+        val name = proxyName?.trim()?.takeIf { it.isNotEmpty() } ?: return
+        val found = jdbcTemplate.query(
+            "SELECT id FROM proxy_endpoint WHERE name = ?",
+            { resultSet, _ -> resultSet.getLong(1) },
+            name,
+        ).firstOrNull()
+        if (found == null) {
+            throw badRequest("Прокси '$name' не найден")
+        }
+    }
+
     private fun buildUpdateProviderArguments(
         request: ProviderModelService.ProviderRequest,
         id: Long,
@@ -345,6 +362,8 @@ class JdbcProviderModelService(
         arguments.add(request.pricingMode ?: "")
         arguments.add(request.pricePerMillionTokens)
         arguments.add(request.priceMonthly)
+        // пусто = без прокси (UI всегда присылает значение дропдауна)
+        arguments.add(request.proxyName?.trim()?.takeIf { it.isNotEmpty() })
         if (request.oauthClientSecret != null && request.oauthClientSecret.isNotBlank()) {
             arguments.add(request.oauthClientSecret)
         }
@@ -419,7 +438,7 @@ class JdbcProviderModelService(
                       effort_mapping, auth_type, oauth_grant, oauth_client_id,
                       oauth_token_url, oauth_scopes,
                       pricing_mode, price_per_million_tokens, price_monthly,
-                      created_at, updated_at
+                      created_at, updated_at, proxy_name
                FROM provider WHERE id = ?""",
             { resultSet ->
                 providerRows.add(
@@ -444,6 +463,7 @@ class JdbcProviderModelService(
                         resultSet.getDouble(18).takeIf { !resultSet.wasNull() },
                         resultSet.getLong(19),
                         resultSet.getLong(20),
+                        resultSet.getString(21)?.takeIf { it.isNotBlank() },
                     ),
                 )
             },
@@ -501,6 +521,7 @@ class JdbcProviderModelService(
             pricingMode = row[15] as String,
             pricePerMillionTokens = row[16] as Double?,
             priceMonthly = row[17] as Double?,
+            proxyName = row[20] as String?,
             models = models,
             createdAt = row[18] as Long,
             updatedAt = row[19] as Long,
