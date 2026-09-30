@@ -7,12 +7,19 @@ import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.reactor.awaitSingle
 import org.springframework.core.io.buffer.DataBuffer
 import org.springframework.http.HttpHeaders
+import org.springframework.http.HttpMethod
 import org.springframework.http.MediaType
 import org.springframework.http.ResponseEntity
+import org.springframework.http.client.reactive.ClientHttpRequest
 import org.springframework.stereotype.Service
+import org.springframework.util.MultiValueMap
+import org.springframework.web.reactive.function.BodyInserter
+import org.springframework.web.reactive.function.BodyInserters
 import org.springframework.web.reactive.function.client.WebClient
 import org.springframework.web.server.ServerWebExchange
+import org.springframework.web.util.UriComponentsBuilder
 import reactor.core.publisher.Flux
+import reactor.core.publisher.Mono
 import reactor.core.publisher.SignalType
 import ru.wizard.web.claudeproxy.auth.ApiKeyAuthFilter
 import ru.wizard.web.claudeproxy.proxy.AnthropicHandler
@@ -106,6 +113,84 @@ class WebClientAnthropicHandler(
                 if (cacheKey != null) requestCacheService.endFlight(cacheKey)
             }
         }
+    }
+
+    override suspend fun passThroughRequest(
+        exchange: ServerWebExchange,
+        route: ModelRegistry.Route,
+        method: HttpMethod,
+        upstreamPath: String,
+        query: MultiValueMap<String, String>?,
+        bodyBytes: ByteArray?,
+    ): ResponseEntity<Flux<DataBuffer>> {
+        val authorizationHeader = resolveAuthorizationHeader(route.provider)
+        return buildPassthroughCall(
+            exchange,
+            route,
+            method,
+            upstreamPath,
+            query,
+            MediaType.APPLICATION_JSON,
+            bodyBytes?.let { BodyInserters.fromValue(it) },
+            authorizationHeader,
+        ).awaitSingle()
+    }
+
+    override suspend fun passThroughStreamingBody(
+        exchange: ServerWebExchange,
+        route: ModelRegistry.Route,
+        upstreamPath: String,
+        contentType: MediaType?,
+        body: Flux<DataBuffer>,
+    ): ResponseEntity<Flux<DataBuffer>> {
+        val authorizationHeader = resolveAuthorizationHeader(route.provider)
+        return buildPassthroughCall(
+            exchange,
+            route,
+            HttpMethod.POST,
+            upstreamPath,
+            query = null,
+            contentType = contentType,
+            bodyInserter = BodyInserters.fromDataBuffers(body),
+            authorizationHeader = authorizationHeader,
+        ).awaitSingle()
+    }
+
+    /** Запрос в один провайдер без retry: статус и тело upstream уходят клиенту как есть. */
+    private fun buildPassthroughCall(
+        exchange: ServerWebExchange,
+        route: ModelRegistry.Route,
+        method: HttpMethod,
+        upstreamPath: String,
+        query: MultiValueMap<String, String>?,
+        contentType: MediaType?,
+        bodyInserter: BodyInserter<*, in ClientHttpRequest>?,
+        authorizationHeader: Pair<String, String>,
+    ): Mono<ResponseEntity<Flux<DataBuffer>>> {
+        val provider = route.provider
+        val uriBuilder = UriComponentsBuilder.fromUriString(provider.baseUrl.trimEnd('/') + upstreamPath)
+        query?.forEach { (name, values) ->
+            values.forEach { value -> uriBuilder.queryParam(name, value) }
+        }
+        val requestSpecification = webClient.method(method).uri(uriBuilder.encode().build().toUri())
+        if (contentType != null) {
+            requestSpecification.contentType(contentType)
+        }
+        requestSpecification.header(authorizationHeader.first, authorizationHeader.second)
+        requestSpecification.header(
+            "anthropic-version",
+            exchange.request.headers.getFirst("anthropic-version") ?: "2023-06-01",
+        )
+        exchange.request.headers.getFirst("anthropic-beta")?.let { requestSpecification.header("anthropic-beta", it) }
+        provider.extraHeaders.forEach { (name, value) -> requestSpecification.header(name, value) }
+        bodyInserter?.let { requestSpecification.body(it) }
+        // retrieve + onStatus «всегда, без ошибки»: статус и тело upstream
+        // проходят клиенту как есть; toEntityFlux держит соединение до
+        // конца потока.
+        return requestSpecification
+            .retrieve()
+            .onStatus({ true }) { Mono.empty() }
+            .toEntityFlux(DataBuffer::class.java)
     }
 
     /** (имя-заголовка, значение): oauth → Authorization Bearer, иначе x-api-key. */

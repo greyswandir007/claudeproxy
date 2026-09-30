@@ -58,4 +58,17 @@ interface ModelRegistry {
     fun exposedModels(): List<String>
 
     fun routes(): List<Route>
+
+    /** Все маршруты провайдера — для sticky-запросов по привязке ресурса. */
+    fun routesForProvider(providerName: String): List<Route> =
+        routes().filter { it.provider.name == providerName }
+
+    /**
+     * Первичный anthropic-маршрут — для листингов Batches/Files API, где
+     * модели в запросе нет: наименьший priority среди anthropic-провайдеров.
+     */
+    fun primaryAnthropicRoute(): Route? =
+        routes()
+            .filter { it.provider.type == "anthropic" }
+            .minByOrNull { it.mapping.priority }
 }

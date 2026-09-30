@@ -580,8 +580,8 @@ M15п1, тарификация M15п2), п.5 (кэш повторов, M16), п�
 
 Согласованная часть плана закрыта полностью. Опциональные нерешённые пункты:
 M19 (локальная модель-оптимизатор) — по отдельному решению заказчика;
-из «крупных» остаются Batches API (п.3) и калибровка count_tokens (п.4) —
-как малый следующий шаг. Смягчение ключа кэша повторов — закрыто
+из «крупных» остаётся Batches API (п.3) — черновик плана в разделе 24
+(M29); калибровка count_tokens (п.4) закрыта в M28. Смягчение ключа кэша повторов — закрыто
 (2026-09-29) без изменения ключа: точный ключ остаётся. Разбор по данным
 счётчиков: на агентном трафике 196 lookups / 0 hits / 196 noEntry — диалоги
 растут, побайтовых повторов нет; исторические 87 hits целиком на локальной
@@ -1004,3 +1004,125 @@ Claude Code планирует по этой оценке контекст и л
 Отметка выполнения: ✅ (2026-09-30) — код, тесты и `./gradlew test` зелёные;
 фича включена по умолчанию, влияние на оценку — только после накопления
 минимума образцов.
+
+## 24. План v2.10 (M29) — Batches API + Files API (pass-through)
+
+Согласован 2026-09-30. Реализация п.3 раздела «Крупные / на вырост»:
+`/v1/messages/batches` — pass-through для anthropic-маршрутов, фоновые
+задачи вдвое дешевле, плюс Files API (`/v1/files`) для `file_id` внутри
+батчей (решение при согласовании). Потребитель — скрипты пользователя
+(Claude Code батчи не использует); openai-провайдеры вне скоупа.
+
+### Контракт upstream (Anthropic Batches + Files)
+
+- `POST /v1/messages/batches` — тело `{"requests": [{"custom_id",
+  "params": {…тело /v1/messages}}]}` → объект message_batch:
+  `id` (`msgbatch_…`), `processing_status`, `request_counts`,
+  `created_at`, `expires_at`.
+- `GET /v1/messages/batches?limit&before_id&after_id` — листинг (только
+  одна страница, курсорная пагинация).
+- `GET /v1/messages/batches/{id}` — статус.
+- `POST /v1/messages/batches/{id}/cancel` — отмена.
+- `POST /v1/messages/batches/{id}/results` — JSONL, по объекту на строку:
+  `{custom_id, result: {type: succeeded|errored|canceled|expired,
+  message?: {…, model, usage}}}`. Строки приходят в произвольном порядке;
+  результат доступен до 29 дней, читать можно многократно.
+- `POST /v1/files` — multipart/form-data (`file`); ответ: `id` (`file_…`),
+  `filename`, `mime_type`, `size_bytes`, `created_at`. Внутри
+  `params.messages` батча файл ссылается как `{"type": "document"|"image",
+  "source": {"type": "file", "file_id": …}}`.
+- `GET /v1/files?limit&before_id&after_id` — листинг.
+- `GET /v1/files/{id}` — метаданные.
+- `GET /v1/files/{id}/content` — контент (только для сгенерированных
+  upstream файлов; загруженные пользователем не выгружаются).
+- `DELETE /v1/files/{id}` — удаление (204).
+
+### Решение
+
+1. **Маршрутизация и sticky.** Батч/файл живут на конкретном
+   upstream-провайдере, поэтому: create маршрутизируется как обычный
+   запрос — по модели из `requests[0].params.model` (все `params[].model`
+   должны разрешаться в один и тот же провайдер, иначе 400
+   `invalid_request_error` с объяснением); upload файла — на первичный
+   anthropic-провайдер. Из ответов upstream сохраняем привязки
+   `msgbatch_id|file_id → provider_name` в БД (миграция V16, единая
+   таблица `provider_resources` с `resource_type`). Retrieve/cancel/
+   results/content/delete идут по привязке — переживает перезапуск прокси;
+   успешный DELETE файла заодно удаляет строку привязки. Листинги (без id)
+   — на первичный anthropic-провайдер (первый по приоритету); известное
+   ограничение: ресурсы остальных маршрутов в листинге не видны, по id
+   доступны. Запрос по неизвестному id — fallback на первичный провайдер
+   (upstream честно ответит 404).
+2. **Перезапись моделей.** На create `params[].model` переписывается в
+   upstream-имя маршрута (как в /v1/messages); прочие adjuster'ы
+   (request/tokenSaving, конвертация system-роли) к батчам не применяются —
+   тела уходят как есть. В JSONL результатов `result.message.model`
+   переписывается обратно в публичное имя (обратный lookup по маппингам
+   провайдера). Multipart-загрузка файлов не парсится и не меняется —
+   тело стримится как есть с клиентским Content-Type (включая boundary).
+3. **Учёт usage с дедупом.** Results стримится клиенту без агрегации всего
+   тела: построчный трансформер (буфер неполной последней строки) на каждой
+   полной строке — разбор JSON, перезапись model, при `result.message.usage`
+   — `UsageEvent` (публичное имя модели, токены как есть). Дедуп повторных
+   чтений: таблица `message_batch_usage` с PK `(batch_id, custom_id)`,
+   `INSERT OR IGNORE` — UsageEvent пишем только при успешной вставке.
+   Согласовано: стоимость батчей в отчётах — по полной ставке, 50% скидка
+   не моделируется.
+4. **Квоты.** `keyQuotaService.enforce` — только на create батча и upload
+   файла (счётчик запросов ключа); чтения без enforce, чтобы поллинг не
+   съедал лимит.
+5. **Транспорт.** Новый метод `AnthropicHandler.passThroughRequest`:
+   произвольный метод + query + опциональное тело (байты или поток
+   DataBuffer для multipart) в один провайдер, без retry-каскада (create/
+   upload неидемпотентны — повтор мог бы задублировать; сбой отдаётся
+   клиенту как есть). Заголовки — как в buildCall: авторизация провайдера,
+   `anthropic-version`, клиентский `anthropic-beta`, extraHeaders.
+   Бинарные ответы (контент файла) и JSONL стримятся без агрегации.
+6. **Код.** `MessageBatchesController` и `FilesController` (proxy, ошибки
+   в формате ApiError), `ResourceBindingService` +
+   `impl/JdbcResourceBindingService` (service/routing — рядом с аффинностью
+   разговоров), миграция V16, DAO-методы в
+   `DatabaseProvider`/`SqliteDatabaseProvider`.
+
+### Шаги
+
+1. Миграция V16 (sqlite): `provider_resources` (`resource_type` TEXT,
+   `resource_id` TEXT, `provider_name` TEXT NOT NULL, `created_at` INTEGER
+   NOT NULL, PRIMARY KEY (`resource_type`, `resource_id`));
+   `message_batch_usage` (`batch_id` TEXT, `custom_id` TEXT, PRIMARY KEY
+   (`batch_id`, `custom_id`)).
+2. `DatabaseProvider`: `bindProviderResource`, `findProviderResource`,
+   `forgetProviderResource`, `rememberMessageBatchResult` (INSERT OR
+   IGNORE → Boolean), очистка устаревших строк (TTL по created_at — батчи
+   30 дней, файлы бессрочно, при старте).
+3. `ResourceBindingService` + Jdbc-реализация.
+4. `AnthropicHandler.passThroughRequest` + реализация в
+   `WebClientAnthropicHandler` (GET/POST/DELETE + query + тело байтами
+   или потоком).
+5. `MessageBatchesController`: create (валидация models → один провайдер,
+   enforce, перезапись params[].model, bind), list (primary, query),
+   retrieve/cancel (по привязке), results (построчный трансформер:
+   model → публичное имя, usage → UsageEvent с дедупом).
+6. `FilesController`: upload (стриминг multipart, primary, enforce, bind),
+   list (primary, query), retrieve/content/delete (по привязке, binary
+   pass-through).
+7. Тесты в app: юнит-тесты привязки и дедупа; интеграционные сценарии
+   с мок-upstream — create+retrieve+results, повторное чтение results не
+   дублирует usage, mixed-models → 400, неизвестный id → fallback;
+   upload → file_id в батче → results; delete файла удаляет привязку.
+
+### Acceptance
+
+Сквозной прогон curl против тестового маршрута: upload файла → create батча
+с `file_id` → status → results; повторный results не добавляет usage;
+после перезапуска привязки живы (БД); model в results — публичное имя;
+delete файла → 204 и привязка удалена; `./gradlew test` зелёные.
+
+**Отметка выполнения:** ✅ (2026-09-30) — `BatchesAndFilesIntegrationTest`
+(5 сценариев, два фейковых upstream) и `./gradlew test` зелёные. Отступления
+от плана: квота на upload файла не проверяется — enforce оказался
+allowlist'ом моделей, а модели в загрузке нет; очистка устаревших привязок
+батчей выполняется один раз за запуск (лениво при первом bind), а не при
+старте; транспорт — `retrieve().onStatus({true}) { empty }` +
+`toEntityFlux` (обмен `exchangeToMono` сливал тело — статус и поток проходят
+насквозь без агрегации).

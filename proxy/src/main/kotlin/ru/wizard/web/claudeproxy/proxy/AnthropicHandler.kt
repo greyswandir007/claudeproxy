@@ -2,7 +2,10 @@ package ru.wizard.web.claudeproxy.proxy
 
 import com.fasterxml.jackson.databind.JsonNode
 import org.springframework.core.io.buffer.DataBuffer
+import org.springframework.http.HttpMethod
+import org.springframework.http.MediaType
 import org.springframework.http.ResponseEntity
+import org.springframework.util.MultiValueMap
 import org.springframework.web.server.ServerWebExchange
 import reactor.core.publisher.Flux
 import ru.wizard.web.claudeproxy.routing.ModelRegistry
@@ -23,5 +26,33 @@ interface AnthropicHandler {
         upstreamPath: String,
         recordUsage: Boolean,
         conversationKey: String? = null,
+    ): ResponseEntity<Flux<DataBuffer>>
+
+    /**
+     * Одноразовый pass-through произвольного запроса к Batches/Files API:
+     * метод, query и готовое тело байтами уходят в один провайдер без
+     * retry-каскада (create/upload неидемпотентны), ответ возвращается
+     * клиенту как есть, включая статус ошибки upstream.
+     */
+    suspend fun passThroughRequest(
+        exchange: ServerWebExchange,
+        route: ModelRegistry.Route,
+        method: HttpMethod,
+        upstreamPath: String,
+        query: MultiValueMap<String, String>?,
+        bodyBytes: ByteArray?,
+    ): ResponseEntity<Flux<DataBuffer>>
+
+    /**
+     * Pass-through стримящегося тела (multipart-загрузка файла): байты
+     * клиента прокачиваются в upstream без разбора, с клиентским
+     * Content-Type (включая boundary).
+     */
+    suspend fun passThroughStreamingBody(
+        exchange: ServerWebExchange,
+        route: ModelRegistry.Route,
+        upstreamPath: String,
+        contentType: MediaType?,
+        body: Flux<DataBuffer>,
     ): ResponseEntity<Flux<DataBuffer>>
 }
