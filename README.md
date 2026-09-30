@@ -48,6 +48,16 @@ Ollama… с полным переводом протокола, включая 
   `ttl-seconds`, лимит записей — `max-entries`), диагностика —
   `GET /api/conversation-affinity-stats`. Компакция истории или смена tools
   меняют ключ — разговор привяжется заново.
+- **Калибровка count_tokens для openai**: у openai-провайдеров нет аналога
+  `/count_tokens`, и прокси оценивает токены по правилу «~4 симв./токен +
+  1600 на картинку». Коэффициент «символы → токены» дообучается по
+  фактическим `input_tokens` ответов (таблица `token_calibration`,
+  накопительные суммы по паре модель/провайдер; картинки вычитаются
+  фиксированной оценкой) и применяется в `POST /v1/messages/count_tokens`,
+  пока образцов меньше минимума — прежнее правило. Включено по умолчанию
+  (`claudeproxy.token-calibration.enabled`, минимум образцов —
+  `minimum-samples`), диагностика и сброс —
+  `GET`/`DELETE /api/token-calibration`.
 - **Миграции БД**: db/migration/{sqlite,postgres}/V*.sql применяются
   автоматически при старте, каждая в транзакции; набор диалекта выбирается по
   JDBC-URL источника данных (DatabaseMigrationRunner + DatabaseDialect).

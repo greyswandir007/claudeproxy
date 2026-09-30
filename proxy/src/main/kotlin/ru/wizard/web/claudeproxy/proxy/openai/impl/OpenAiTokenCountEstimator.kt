@@ -5,11 +5,32 @@ import com.fasterxml.jackson.databind.JsonNode
 /**
  * Оценка числа токенов запроса без похода к провайдеру:
  * ~4 символа на токен по текстовым значениям system/messages/tools,
- * картинки — фиксированно по 1600 токенов.
+ * картинки — фиксированно по 1600 токенов. Коэффициент «символов на токен»
+ * уточняется калибровкой по фактическим input_tokens ответов провайдера.
  */
 class OpenAiTokenCountEstimator {
 
-    fun estimate(requestRoot: JsonNode): Long {
+    /**
+     * Оценка числа токенов; [charactersPerToken] — выученный коэффициент
+     * «символов на токен» (null — стандартное приближение 4 симв./токен).
+     */
+    fun estimate(requestRoot: JsonNode, charactersPerToken: Double? = null): Long {
+        val counts = textCounts(requestRoot)
+        val ratio = charactersPerToken ?: DEFAULT_CHARACTERS_PER_TOKEN
+        return (counts.textCharacters / ratio).toLong() + counts.imageCount * TOKENS_PER_IMAGE
+    }
+
+    /** Число текстовых символов запроса — та же база, из которой [estimate] получает токены. */
+    fun textCharacterCount(requestRoot: JsonNode): Long = textCounts(requestRoot).textCharacters
+
+    /**
+     * Фактические input_tokens ответа за вычётом фиксированной оценки картинок —
+     * «текстовые» токены, на которых учится калибровка.
+     */
+    fun textTokenCount(requestRoot: JsonNode, inputTokens: Long): Long =
+        inputTokens - textCounts(requestRoot).imageCount * TOKENS_PER_IMAGE
+
+    private fun textCounts(requestRoot: JsonNode): TextCounts {
         var characters = 0L
         var imageCount = 0L
 
@@ -23,8 +44,10 @@ class OpenAiTokenCountEstimator {
             characters += tool.path("description").asText("").length.toLong()
             characters += tool.path("input_schema").toString().length.toLong()
         }
-        return characters / CHARACTERS_PER_TOKEN + imageCount * TOKENS_PER_IMAGE
+        return TextCounts(characters, imageCount)
     }
+
+    private data class TextCounts(val textCharacters: Long, val imageCount: Long)
 
     private fun textLength(node: JsonNode?): Long {
         if (node == null || node.isNull) return 0
@@ -48,7 +71,8 @@ class OpenAiTokenCountEstimator {
     }
 
     private companion object {
-        const val CHARACTERS_PER_TOKEN = 4L
+        /** Стандартное приближение для английского текста, пока калибровка не накоплена. */
+        const val DEFAULT_CHARACTERS_PER_TOKEN = 4.0
         const val TOKENS_PER_IMAGE = 1600L
     }
 }

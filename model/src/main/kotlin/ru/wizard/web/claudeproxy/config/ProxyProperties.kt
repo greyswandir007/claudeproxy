@@ -18,6 +18,7 @@ class ProxyProperties(
     var dashboard: Dashboard = Dashboard(),
     var requestCache: RequestCache = RequestCache(),
     var conversationAffinity: ConversationAffinity = ConversationAffinity(),
+    var tokenCalibration: TokenCalibration = TokenCalibration(),
     var serverEvent: ServerEvent = ServerEvent(),
     var backup: Backup = Backup(),
 ) {
@@ -97,5 +98,13 @@ class ProxyProperties(
         var ttlSeconds: Long = 3600,
         /** Лимит записей привязок в памяти; переполнение выталкивает самые старые. */
         var maxEntries: Int = 1000,
+    )
+
+    class TokenCalibration(
+        /** Самообучение коэффициента «символы → токены» для оценки count_tokens
+         *  у openai-провайдеров по фактическим input_tokens ответов. */
+        var enabled: Boolean = true,
+        /** Минимальное число накопленных запросов, после которого коэффициент применяется. */
+        var minimumSamples: Long = 20,
     )
 }

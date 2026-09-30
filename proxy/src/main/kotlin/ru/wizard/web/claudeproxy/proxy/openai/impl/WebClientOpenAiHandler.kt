@@ -30,6 +30,7 @@ import ru.wizard.web.claudeproxy.routing.ConversationAffinityService
 import ru.wizard.web.claudeproxy.routing.RouteCircuitBreaker
 import ru.wizard.web.claudeproxy.proxy.openai.OpenAiHandler
 import ru.wizard.web.claudeproxy.routing.ModelRegistry
+import ru.wizard.web.claudeproxy.usage.TokenCalibrationService
 import ru.wizard.web.claudeproxy.usage.UsageEvent
 import ru.wizard.web.claudeproxy.usage.UsageRecorder
 import java.nio.charset.StandardCharsets.UTF_8
@@ -50,6 +51,7 @@ class WebClientOpenAiHandler(
     private val routeCircuitBreaker: RouteCircuitBreaker,
     private val requestCacheService: RequestCacheService,
     private val conversationAffinityService: ConversationAffinityService,
+    private val tokenCalibrationService: TokenCalibrationService,
 ) : OpenAiHandler {
     private val logger = KotlinLogging.logger {}
 
@@ -127,7 +129,13 @@ class WebClientOpenAiHandler(
         route: ModelRegistry.Route,
         requestRoot: JsonNode,
     ): ResponseEntity<Flux<DataBuffer>> {
-        val estimatedTokens = tokenCountEstimator.estimate(requestRoot)
+        // у openai нет аналога /count_tokens — оценка по калиброванному коэффициенту
+        // «символы → токены» этой пары модель/провайдер, если он уже накоплен
+        val charactersPerToken = tokenCalibrationService.charactersPerToken(
+            route.mapping.publicName,
+            route.provider.name,
+        )
+        val estimatedTokens = tokenCountEstimator.estimate(requestRoot, charactersPerToken)
         val responseBody = objectMapper.createObjectNode().put("input_tokens", estimatedTokens)
         return ResponseEntity.ok()
             .contentType(MediaType.APPLICATION_JSON)
@@ -190,6 +198,15 @@ class WebClientOpenAiHandler(
                     if (recordUsage && responseEntity.statusCode.is2xxSuccessful()) {
                         conversationAffinityService.bind(
                             requestRoot.path("model").asText(""), conversationKey, route.provider.name,
+                        )
+                    }
+                    // калибровка count_tokens: фактические input_tokens успешного ответа
+                    if (responseEntity.statusCode.is2xxSuccessful()) {
+                        tokenCalibrationService.observeAsync(
+                            route.mapping.publicName,
+                            route.provider.name,
+                            tokenCountEstimator.textCharacterCount(requestRoot),
+                            tokenCountEstimator.textTokenCount(requestRoot, translated.usageAccumulator.inputTokens),
                         )
                     }
                     // первый проход успешен — сохраняем ответ в кэш повторов
@@ -334,6 +351,13 @@ class WebClientOpenAiHandler(
                             requestRoot.path("model").asText(""), conversationKey, route.provider.name,
                         )
                     }
+                    // калибровка count_tokens: фактические input_tokens успешного стрима
+                    tokenCalibrationService.observeAsync(
+                        route.mapping.publicName,
+                        route.provider.name,
+                        tokenCountEstimator.textCharacterCount(requestRoot),
+                        tokenCountEstimator.textTokenCount(requestRoot, sseTranslator.usageAccumulator.inputTokens),
+                    )
                 }
                 if (recordUsage && signal != SignalType.ON_ERROR) {
                     val upstreamEndedAtMilliseconds = System.currentTimeMillis()
