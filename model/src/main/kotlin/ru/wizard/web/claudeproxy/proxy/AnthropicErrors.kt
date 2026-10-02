@@ -15,6 +15,7 @@ import java.nio.charset.StandardCharsets
 object AnthropicErrors {
     private val objectMapper = ObjectMapper()
 
+    /** Тело ошибки в формате Anthropic: {"type":"error","error":{…}}. */
     fun json(type: String, message: String): String =
         objectMapper.writeValueAsString(
             mapOf("type" to "error", "error" to mapOf("type" to type, "message" to message)),

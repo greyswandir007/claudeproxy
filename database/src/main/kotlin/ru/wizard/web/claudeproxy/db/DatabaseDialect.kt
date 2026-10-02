@@ -8,7 +8,9 @@ package ru.wizard.web.claudeproxy.db
  * SQL-миграций соответствующего диалекта: classpath:db/migration/&lt;диалект&gt;/V*.sql.
  */
 enum class DatabaseDialect(
+    /** Префикс JDBC-URL, по которому определяется диалект. */
     val jdbcUrlPrefix: String,
+    /** Каталог SQL-миграций этого диалекта в classpath. */
     val migrationLocation: String,
 ) {
     SQLITE("jdbc:sqlite:", "classpath:db/migration/sqlite/V*.sql"),

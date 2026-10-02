@@ -29,6 +29,7 @@ class WebConfiguration(private val resourceLoader: ResourceLoader) : WebFluxConf
         configurer.defaultCodecs().maxInMemorySize(MAX_IN_MEMORY_SIZE_BYTES)
     }
 
+    /** Точечные GET-роуты раздачи дашборда: «/» и /assets/{filename}. */
     @Bean
     fun dashboardRoutes(): RouterFunction<ServerResponse> = RouterFunctions.route()
         .GET("/") { _ -> serveDashboardFile("index.html", MediaType.TEXT_HTML) }

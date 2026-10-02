@@ -13,6 +13,7 @@ import org.springframework.context.annotation.Configuration
 @Configuration
 class JacksonConfiguration {
 
+    /** Единственный ObjectMapper приложения (JsonNode-разбор без строгих DTO). */
     @Bean
     fun objectMapper(): ObjectMapper = ObjectMapper().apply {
         factory.setStreamReadConstraints(

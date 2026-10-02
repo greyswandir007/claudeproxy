@@ -70,6 +70,7 @@ class SqliteBackupService(
         }
     }
 
+    /** Запуск бэкапа по расписанию (cron из claudeproxy.backup.cron). */
     @Scheduled(cron = "\${claudeproxy.backup.cron:0 53 3 * * *}")
     fun scheduledBackup() {
         kotlinx.coroutines.runBlocking { createBackup() }

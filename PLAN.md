@@ -1286,3 +1286,55 @@ REST по id (не по имени); диагностика — на стран�
 http://-целей) — тестовый `FakeHttpProxy` умеет CONNECT; в reactor-netty 1.3
 тип задаётся `ProxyProvider.Proxy` (не Type); SOCKS5 проверен только
 архитектурно — ручная проверка с реальным прокси остаётся за заказчиком.
+
+## 27. M32 — качество сопровождения: KDoc, тесты, документация, подсказки (2026-10-02)
+
+Решения заказчика: KDoc — полный охват (все классы и публичные члены всех
+модулей); документация — короткий README + отдельные `docs/`; подсказки в UI —
+строка-подсказка под нетривиальным полем, единый паттерн без новых
+зависимостей.
+
+Правило KDoc (чтобы «всё подряд» не превращалось в шум): каждый top-level
+класс/объект/интерфейс/enum — KDoc; каждый публичный val/fun —
+однострочник; `override`-члены документируются только если реализация
+добавляет семантику сверх контракта интерфейса; private-хелперы — только
+для неочевидной логики.
+
+### Этапы
+
+1. **Фундамент.** Дополнить `config/application.example.yml` группами
+   `conversation-affinity`, `token-calibration`, `server-event` (отставание
+   от ProxyProperties); этот раздел PLAN.md; KDoc по model + database + app
+   (~20 файлов).
+2. **KDoc(service)** (~50 файлов): impl-классы — основной долг
+   (JdbcStatsService, Jdbc* остальных пакетов, InMemoryRouteCircuitBreaker,
+   Db*-чат-история, providers/impl, proxy/cache/impl, оптимизатор);
+   интерфейсы — точечные доуплотнения.
+3. **KDoc(proxy, api)** (~25 файлов): WebClientAnthropicHandler (~600 строк,
+   3 блока → полный охват), WebClientOpenAiHandler, TranslateChatHandler,
+   CountTokensHandler, retry-policy, sniffer/accumulator; контроллеры
+   /v1/*, batches/files, OpenAI-compat; все контроллеры /api/*.
+4. **Тесты на пробелы.** Юнит: InMemoryRouteCircuitBreaker (OPEN/HALF-OPEN),
+   CanonicalJsonSerializer, EnvironmentReferenceResolver,
+   ProviderSettingCatalog (расширить). Integration/JDBC: чат-история
+   (DbChatHistoryService, DbChatMessageService, DbConversationCache — 0
+   покрытия), JdbcServerEventRetentionService, SqliteBackupService, OAuth
+   expiry/ошибка, OpenAI-compat edge cases, ApiCacheControlWebFilter.
+   Сначала проверить WebClientUsageService на мёртвый код.
+5. **Документация.** README сократить до «что это + быстрый старт», добавить
+   M30/M31 в возможности; создать `docs/architecture.md` (модули, поток
+   запроса, маршрутизация/affinity/кулдауны/breaker, оптимизатор, кэш, БД),
+   `docs/settings.md` (справочник claudeproxy.* по ProxyProperties),
+   `docs/api.md` (REST дашборда + проксируемые эндпоинты). Подробности из
+   текущего README релоцировать в docs/.
+6. **UI-подсказки.** Компонент FieldHint (строка под полем, `.field-hint` в
+   styles.css) + CSS-тултип (?) для плотных мест; каталоги текстов по образцу
+   SETTING_CATALOG. Раскатка: ProviderForm (описания SET-1…16 показать
+   видимо, не только hover), KeyQuotaForm, ExposurePage (внутренние ряды +
+   4 оставшиеся секции), ProxiesPage, ModelForm.
+
+### Приёмка
+
+После каждого этапа `./gradlew build` зелёный; этап 6 — сборка дашборда и
+визуальная проверка; docs/settings.md согласован с ProxyProperties и
+example.yml; README актуален (M30, M31 включены).

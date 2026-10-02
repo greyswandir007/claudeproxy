@@ -23,6 +23,7 @@ class DatabaseMigrationRunner(
 ) {
     private val logger = KotlinLogging.logger {}
 
+    /** Применяет все неприменённые миграции при старте приложения. */
     @PostConstruct
     fun migrate() {
         kotlinx.coroutines.runBlocking { databaseProvider.execute { migrateBlocking() } }

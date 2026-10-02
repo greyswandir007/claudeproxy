@@ -4,11 +4,13 @@ package ru.wizard.web.claudeproxy.serverevent
 data class ServerEvent(
     /** Присваивается БД; при записи в очередь — 0. */
     val id: Long = 0,
+    /** Момент события, epoch millis. */
     val timestampMilliseconds: Long,
     /** INFO | WARN | ERROR. */
     val level: String,
     /** Имя логгера-источника (категория) или «application» для явных событий. */
     val logger: String,
+    /** Текст записи лога. */
     val message: String,
     /** Stack trace исключения, если оно есть в записи лога. */
     val stackTrace: String? = null,

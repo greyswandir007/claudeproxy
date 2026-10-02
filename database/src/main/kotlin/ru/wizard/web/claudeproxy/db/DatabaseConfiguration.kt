@@ -14,6 +14,7 @@ import javax.sql.DataSource
 @Configuration
 class DatabaseConfiguration {
 
+    /** Диалект БД, определённый по JDBC-URL открытого соединения. */
     @Bean
     fun databaseDialect(dataSource: DataSource): DatabaseDialect {
         val databaseUrl = dataSource.connection.use { connection -> connection.metaData.url }
@@ -25,6 +26,7 @@ class DatabaseConfiguration {
             )
     }
 
+    /** Диспетчер БД по диалекту: SQLite — сериализованный, Postgres — конкурентный. */
     @Bean
     fun databaseProvider(databaseDialect: DatabaseDialect): DatabaseProvider =
         when (databaseDialect) {

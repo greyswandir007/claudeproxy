@@ -16,10 +16,13 @@ import java.nio.charset.StandardCharsets
 object OpenAiCompatibilityErrors {
     private val objectMapper = ObjectMapper()
 
+    /** Путь входящего OpenAI-совместимого эндпоинта. */
     const val OPENAI_INBOUND_PATH_PREFIX = "/v1/chat/completions"
 
+    /** Относится ли путь запроса к входящему OpenAI-совместимому эндпоинту. */
     fun isInboundPath(path: String): Boolean = path.startsWith(OPENAI_INBOUND_PATH_PREFIX)
 
+    /** Тело ошибки в формате OpenAI: {"error":{"message","type","param","code"}}. */
     fun json(type: String, message: String): String =
         objectMapper.writeValueAsString(
             mapOf(
