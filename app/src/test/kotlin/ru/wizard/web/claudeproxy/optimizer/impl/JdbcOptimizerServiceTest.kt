@@ -101,6 +101,7 @@ class JdbcOptimizerServiceTest {
                 jdbcTemplate = jdbcTemplate,
                 databaseProvider = testDatabaseProvider,
                 environment = MockEnvironment(),
+                proxyProperties = proxyProperties,
             ),
             environment = MockEnvironment(),
             objectMapper = ObjectMapper(),

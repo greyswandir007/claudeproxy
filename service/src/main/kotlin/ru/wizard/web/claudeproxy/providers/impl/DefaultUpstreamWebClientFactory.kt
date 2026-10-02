@@ -1,7 +1,10 @@
 package ru.wizard.web.claudeproxy.providers.impl
 
 import io.github.oshai.kotlinlogging.KotlinLogging
+import io.netty.channel.ChannelOption
+import io.netty.handler.timeout.ReadTimeoutHandler
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.TimeUnit
 import org.springframework.core.env.Environment
 import org.springframework.http.client.reactive.ReactorClientHttpConnector
 import org.springframework.jdbc.core.JdbcTemplate
@@ -10,6 +13,7 @@ import org.springframework.web.reactive.function.client.WebClient
 import reactor.netty.http.client.HttpClient
 import reactor.netty.transport.ProxyProvider
 import ru.wizard.web.claudeproxy.config.EnvironmentReferenceResolver
+import ru.wizard.web.claudeproxy.config.ProxyProperties
 import ru.wizard.web.claudeproxy.db.DatabaseProvider
 import ru.wizard.web.claudeproxy.providers.ProxyEndpointService
 import ru.wizard.web.claudeproxy.providers.UpstreamWebClientFactory
@@ -25,6 +29,7 @@ class DefaultUpstreamWebClientFactory(
     private val jdbcTemplate: JdbcTemplate,
     private val databaseProvider: DatabaseProvider,
     private val environment: Environment,
+    private val proxyProperties: ProxyProperties,
 ) : UpstreamWebClientFactory {
 
     private val logger = KotlinLogging.logger {}
@@ -59,10 +64,24 @@ class DefaultUpstreamWebClientFactory(
     private fun directClient(): WebClient {
         val existing = directClient
         if (existing != null) return existing
-        val created = configure(WebClient.builder()).build()
+        val created = configure(WebClient.builder())
+            .clientConnector(ReactorClientHttpConnector(baseHttpClient()))
+            .build()
         directClient = created
         return created
     }
+
+    /** Общая основа HttpClient: подключение и «молчание» апстрима ограничены
+     *  таймаутами, чтобы стопор вверх по течению не превращался в вечное
+     *  зависание клиента (инцидент 01.10: запрос висел без ответа бесконечно). */
+    private fun baseHttpClient(): HttpClient =
+        HttpClient.create()
+            .option(ChannelOption.CONNECT_TIMEOUT_MILLIS, proxyProperties.upstream.connectTimeoutMilliseconds)
+            .doOnConnected { connection ->
+                connection.addHandlerLast(
+                    ReadTimeoutHandler(proxyProperties.upstream.readTimeoutSeconds, TimeUnit.SECONDS),
+                )
+            }
 
     private suspend fun loadConfig(name: String): ProxyEndpointService.ProxyEndpointConfig? =
         databaseProvider.execute {
@@ -83,7 +102,7 @@ class DefaultUpstreamWebClientFactory(
         }
 
     private fun buildClient(config: ProxyEndpointService.ProxyEndpointConfig): WebClient {
-        val httpClient = HttpClient.create().proxy { spec ->
+        val httpClient = baseHttpClient().proxy { spec ->
             val type = when (config.type.uppercase()) {
                 "SOCKS4" -> ProxyProvider.Proxy.SOCKS4
                 "SOCKS5" -> ProxyProvider.Proxy.SOCKS5

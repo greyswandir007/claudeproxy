@@ -22,6 +22,7 @@ class ProxyProperties(
     var optimizer: Optimizer = Optimizer(),
     var serverEvent: ServerEvent = ServerEvent(),
     var backup: Backup = Backup(),
+    var upstream: Upstream = Upstream(),
 ) {
     class Models(
         /** Белый список public-моделей; пусто = все модели всех провайдеров. */
@@ -123,5 +124,15 @@ class ProxyProperties(
         var maxCompressionsPerRequest: Int = 3,
         /** Ёмкость LRU-кэша сжатий по SHA-256 контента. */
         var maxCacheEntries: Int = 256,
+    )
+
+    /** Таймауты исходящих соединений к провайдерам (прямой путь и через прокси). */
+    class Upstream(
+        /** Таймаут установки TCP-соединения, мс. */
+        var connectTimeoutMilliseconds: Int = 10_000,
+        /** Сколько секунд соединение может молчать (не прочитано ни одного байта),
+         *  прежде чем оно закрывается ошибкой. Защищает клиентов от вечного
+         *  зависания при стопоре апстрима; для SSE безопасно — события идут часто. */
+        var readTimeoutSeconds: Long = 300,
     )
 }
