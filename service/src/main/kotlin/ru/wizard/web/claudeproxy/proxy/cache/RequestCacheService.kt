@@ -21,8 +21,11 @@ interface RequestCacheService {
      * Считается по оригинальному телу клиента ДО пер-маршрутных мутаций
      * (ProviderRequestAdjuster / TokenSavingAdjuster).
      */
+    /** Ключ кэша запроса. */
     data class RequestCacheKey(
+        /** SHA-256 канонического тела. */
         val hash: String,
+        /** Путь к апстриму (/v1/messages или /v1/messages/count_tokens). */
         val upstreamPath: String,
         /** Каноническое тело запроса — хранится в кэше для отладки и контроля. */
         val canonicalRequest: String,
@@ -31,23 +34,38 @@ interface RequestCacheService {
     )
 
     /** Сохранённый ответ кэша для повтора. */
+    /** Ответ из кэша для релея клиенту. */
     data class CachedResponse(
+        /** Тело ответа (SSE-поток или JSON). */
         val responseBody: String,
+        /** Формат тела (управляет Content-Type ответа). */
         val responseFormat: ResponseFormat,
+        /** Модель ответа (для usage-записи). */
         val model: String,
+        /** Провайдер исходного ответа. */
         val provider: String,
+        /** Входные токены исходного ответа. */
         val inputTokens: Long,
+        /** Выходные токены исходного ответа. */
         val outputTokens: Long,
     )
 
     /** Новый элемент кэша: ответ успешного прохода к провайдеру. */
+    /** Строка кэша целиком (ответ + TTL) для дашборда. */
     data class CachedEntry(
+        /** Ключ строки. */
         val cacheKey: RequestCacheKey,
+        /** Тело ответа (SSE-поток или JSON). */
         val responseBody: String,
+        /** Формат тела. */
         val responseFormat: ResponseFormat,
+        /** Модель ответа. */
         val model: String,
+        /** Провайдер исходного ответа. */
         val provider: String,
+        /** Входные токены исходного ответа. */
         val inputTokens: Long,
+        /** Выходные токены исходного ответа. */
         val outputTokens: Long,
         /** Время жизни строки, мс; <= 0 — не кэшировать (кэш выключен). */
         val timeToLiveMilliseconds: Long,
@@ -82,9 +100,13 @@ interface RequestCacheService {
      * Диагностика кэша повторов: счётчики с момента старта процесса (в памяти,
      * не персистентны). misses = missesNoEntry + missesExpired.
      */
+    /** Счётчики кэша запросов для карточки дашборда. */
     data class RequestCacheDiagnostics(
+        /** Всего обращений к кэшу. */
         val lookups: Long,
+        /** Попаданий. */
         val hits: Long,
+        /** Промахов (любого рода). */
         val misses: Long,
         /** Промах: строки с таким ключом в таблице нет вовсе. */
         val missesNoEntry: Long,

@@ -11,7 +11,11 @@ import com.fasterxml.jackson.databind.node.ObjectNode
 class ClaudeSseToChatStreamTranslator(private val objectMapper: ObjectMapper) {
 
     private val pendingLine = StringBuilder()
+
+    /** Накопленный полный текст ассистента (для сохранения в историю). */
     val assistantText = StringBuilder()
+
+    /** stop_reason последнего сообщения, когда он уже встретился в потоке. */
     var stopReason: String? = null
         private set
 
@@ -29,6 +33,7 @@ class ClaudeSseToChatStreamTranslator(private val objectMapper: ObjectMapper) {
         return events
     }
 
+    /** NDJSON-строка ошибки для браузера. */
     fun errorMessage(message: String?): String =
         objectMapper.writeValueAsString(
             mapOf("type" to "error", "message" to (message ?: "stream failed")),

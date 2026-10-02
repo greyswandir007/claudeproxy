@@ -2,7 +2,9 @@ package ru.wizard.web.claudeproxy.usage
 
 /** Одна накопленная запись калибровки count_tokens для пары (модель, провайдер). */
 data class TokenCalibrationEntry(
+    /** Публичное имя модели. */
     val model: String,
+    /** Имя провайдера. */
     val provider: String,
     /** Сумма текстовых символов запросов, участвовавших в обучении. */
     val textCharacters: Long,

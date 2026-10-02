@@ -72,6 +72,7 @@ class AsyncServerEventRecorder(
         )
     }
 
+    /** Дожидается очереди и закрывает диспетчера при остановке приложения. */
     @PreDestroy
     fun shutdown() {
         channel.close()

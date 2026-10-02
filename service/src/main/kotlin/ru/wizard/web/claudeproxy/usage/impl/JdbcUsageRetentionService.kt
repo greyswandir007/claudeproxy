@@ -25,6 +25,7 @@ class JdbcUsageRetentionService(
     private val logger = KotlinLogging.logger {}
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
+    /** Ежесуточная чистка usage_event по retention-days. */
     @Scheduled(cron = "0 37 4 * * *")
     fun scheduledCleanup() {
         scope.launch { deleteOutdatedEvents() }

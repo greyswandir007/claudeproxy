@@ -11,6 +11,7 @@ import com.fasterxml.jackson.databind.node.TextNode
  */
 internal object CanonicalJsonSerializer {
 
+    /** Рекурсивно сериализует узел в каноническую строку. */
     fun serialize(node: JsonNode): String = when {
         node.isObject -> {
             val fields = ArrayList<Map.Entry<String, JsonNode>>(node.size())

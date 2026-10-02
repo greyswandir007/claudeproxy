@@ -55,10 +55,13 @@ interface ModelRegistry {
      */
     fun find(model: String, rotate: Boolean = true, conversationKey: String? = null): List<Route>
 
+    /** Видна ли публичная модель клиентам (GET /v1/models и выдача ошибок). */
     fun isExposed(model: String): Boolean
 
+    /** Публичные имена всех видимых моделей. */
     fun exposedModels(): List<String>
 
+    /** Все маршруты всех моделей (плоско, для диагностики). */
     fun routes(): List<Route>
 
     /** Все маршруты провайдера — для sticky-запросов по привязке ресурса. */

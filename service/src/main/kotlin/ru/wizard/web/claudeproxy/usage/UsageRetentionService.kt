@@ -5,5 +5,6 @@ package ru.wizard.web.claudeproxy.usage
  */
 interface UsageRetentionService {
 
+    /** Удаляет usage_event старше claudeproxy.retention-days (0 = не чистить). */
     suspend fun deleteOutdatedEvents()
 }

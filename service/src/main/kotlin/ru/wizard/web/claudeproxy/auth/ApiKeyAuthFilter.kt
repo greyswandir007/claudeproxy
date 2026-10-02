@@ -77,6 +77,7 @@ class ApiKeyAuthFilter(private val apiKeyService: ApiKeyService) : WebFilter {
         }
 
     companion object {
+        /** Имя авторизованного ключа клиента — атрибут exchange для usage-учёта. */
         const val CLIENT_KEY_ATTRIBUTE = "claudeproxy.clientKey"
 
         /** Полный объект ключа (квоты/allowlist) — для KeyQuotaService. */

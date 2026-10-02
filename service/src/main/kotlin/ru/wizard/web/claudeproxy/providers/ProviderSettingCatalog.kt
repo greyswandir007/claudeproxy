@@ -15,17 +15,26 @@ object ProviderSettingCatalog {
     /** День месяца, с которого начинается 30-дневный платёжный период месячного лимита. */
     const val LIMIT_MONTH_START_DAY = "LIMIT_MONTH_START_DAY"
 
+    /** Тип значения настройки — управляет инпутом в UI и валидацией. */
     enum class ValueType { LONG, DOUBLE, EFFORT_LEVEL, BOOLEAN, NON_EMPTY_TEXT, ONE_OF }
 
+    /** Описание одной настройки каталога. */
     data class SettingDefinition(
+        /** Стабильный ключ (хранится в БД). */
         val key: String,
+        /** Заголовок в UI. */
         val title: String,
+        /** Пояснение в UI. */
         val description: String,
+        /** Тип значения. */
         val valueType: ValueType,
+        /** Подсказка-плейсхолдер инпута. */
         val placeholder: String,
+        /** Варианты для ONE_OF. */
         val values: List<String> = emptyList(),
     )
 
+    /** Все настройки каталога (порядок = порядок в UI). */
     val definitions: List<SettingDefinition> = listOf(
         SettingDefinition(
             key = "API_TIMEOUT_MS",

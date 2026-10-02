@@ -10,6 +10,7 @@ data class ServerEventFilter(
     val messageContains: String? = null,
     /** Курсор: только события с id меньше заданного (null — с самого нового). */
     val beforeId: Long? = null,
+    /** Максимум возвращаемых строк (пагинация «назад»). */
     val limit: Int = 200,
 )
 

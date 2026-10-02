@@ -74,10 +74,13 @@ interface StatsService {
     /** range — пресет; при заданных from/to используется произвольный диапазон. */
     suspend fun byModel(range: String, clientKey: String?, fromMilliseconds: Long?, toMilliseconds: Long?): List<GroupedUsage>
 
+    /** Группировка по провайдеру; параметры как в [byModel]. */
     suspend fun byProvider(range: String, clientKey: String?, fromMilliseconds: Long?, toMilliseconds: Long?): List<GroupedUsage>
 
+    /** Группировка по клиентскому ключу за пресет диапазона. */
     suspend fun byClientKey(range: String): List<GroupedUsage>
 
+    /** История 5-часовых окон ключа, свежие сверху; limit — максимум строк. */
     suspend fun windowHistory(clientKey: String, limit: Int): List<WindowSummary>
 
     /** История окон провайдеров (у каждого свой отсчёт), свежие сверху. */
@@ -225,6 +228,7 @@ interface StatsService {
         val recentFailures: List<FailedAttempt>,
     )
 
+    /** Отчёт по резервным маршрутам (переходам провайдер→провайдер). */
     suspend fun fallbackReport(range: String, clientKey: String?): FallbackReport
 
     /** Тарификация провайдера: одна цена задана, вторая — расчётная из месячного лимита. */

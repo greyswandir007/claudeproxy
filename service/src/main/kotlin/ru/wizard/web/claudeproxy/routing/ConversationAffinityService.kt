@@ -13,14 +13,23 @@ import com.fasterxml.jackson.databind.JsonNode
 interface ConversationAffinityService {
 
     /** Состояние и счётчики аффинности для диагностики дашборда. */
+    /** Счётчики sticky-аффинности для карточки дашборда. */
     data class ConversationAffinityDiagnostics(
+        /** Включена ли аффинность (claudeproxy.conversation-affinity.enabled). */
         val enabled: Boolean,
+        /** Текущее число привязок в памяти. */
         val entries: Int,
+        /** Лимит привязок (max-entries). */
         val maxEntries: Int,
+        /** Всего создано привязок. */
         val binds: Long,
+        /** Запросов, пришедших на привязанного провайдера. */
         val hits: Long,
+        /** Запросов без действующей привязки. */
         val misses: Long,
+        /** Привязок, вытесненных по TTL. */
         val evictionsExpired: Long,
+        /** Привязок, вытесненных по переполнению. */
         val evictionsOverflow: Long,
     )
 

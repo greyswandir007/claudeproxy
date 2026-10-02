@@ -9,20 +9,31 @@ interface ProxyEndpointService {
 
     /** Представление прокси для UI. */
     data class ProxyEndpointView(
+        /** Идентификатор в БД. */
         val id: Long,
+        /** Уникальное имя прокси (на него ссылаются провайдеры). */
         val name: String,
         /** HTTP | HTTPS | SOCKS4 | SOCKS5. */
         val type: String,
+        /** Хост прокси. */
         val host: String,
+        /** Порт прокси. */
         val port: Int,
+        /** Логин; null — без авторизации. */
         val username: String?,
+        /** Задан ли пароль (сам пароль наружу не отдаётся). */
         val hasPassword: Boolean,
+        /** Выключенный прокси не используется фабрикой клиентов. */
         val enabled: Boolean,
+        /** Итог последней проверки: ok | error: … ; null — не проверялся. */
         val lastCheckStatus: String?,
+        /** Момент последней проверки, epoch millis; null — не проверялся. */
         val lastCheckAt: Long?,
         /** Провайдеры, привязанные к этому прокси. */
         val providerNames: List<String>,
+        /** Создание, epoch millis. */
         val createdAt: Long,
+        /** Последнее изменение, epoch millis. */
         val updatedAt: Long,
     )
 
@@ -32,25 +43,39 @@ interface ProxyEndpointService {
      * можно перезаписать — как api-ключ провайдера).
      */
     data class ProxyEndpointRequest(
+        /** Уникальное имя; null при обновлении = не менять. */
         val name: String?,
+        /** HTTP | HTTPS | SOCKS4 | SOCKS5. */
         val type: String?,
+        /** Хост прокси. */
         val host: String?,
+        /** Порт прокси. */
         val port: Int?,
+        /** Логин; null при обновлении = не менять. */
         val username: String?,
+        /** Пароль; null/пусто = не менять. */
         val password: String?,
+        /** Включённость. */
         val enabled: Boolean?,
     )
 
     /** Конфиг прокси для фабрики WebClient'ов; пароль — сырая ссылка. */
     data class ProxyEndpointConfig(
+        /** Имя прокси. */
         val name: String,
+        /** HTTP | HTTPS | SOCKS4 | SOCKS5. */
         val type: String,
+        /** Хост прокси. */
         val host: String,
+        /** Порт прокси. */
         val port: Int,
+        /** Логин; null — без авторизации. */
         val username: String?,
+        /** Пароль или ${ENV:...}-ссылка; null — без пароля. */
         val passwordReference: String?,
     )
 
+    /** Все прокси для страницы «Прокси». */
     suspend fun listProxies(): List<ProxyEndpointView>
 
     /** Создаёт прокси; 400 — кривые поля, 409 — дубль имени. */

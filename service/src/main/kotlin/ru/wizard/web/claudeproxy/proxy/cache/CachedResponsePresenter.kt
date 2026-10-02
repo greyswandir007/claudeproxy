@@ -19,6 +19,7 @@ import java.nio.charset.StandardCharsets
 // public: используется модулем proxy (повтор ответа из кэша в upstream-обработчиках)
 object CachedResponsePresenter {
 
+    /** Готовит web-ответ из закэшированного (SSE или JSON по Content-Type). */
     fun buildResponse(
         exchange: ServerWebExchange,
         cached: RequestCacheService.CachedResponse,

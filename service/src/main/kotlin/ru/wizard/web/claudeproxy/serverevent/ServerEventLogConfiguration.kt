@@ -44,6 +44,7 @@ class ServerEventLogConfiguration(
         recordLifecycleEvent("Server started")
     }
 
+    /** Останавливает логгер, чтобы appender не писал в закрытый контекст. */
     @PreDestroy
     fun shutdown() {
         recordLifecycleEvent("Server stopping")

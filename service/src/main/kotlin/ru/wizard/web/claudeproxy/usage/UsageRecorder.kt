@@ -5,5 +5,6 @@ package ru.wizard.web.claudeproxy.usage
  */
 interface UsageRecorder {
 
+    /** Асинхронная запись события использования (без блокировки запроса). */
     fun recordAsync(usageEvent: UsageEvent)
 }

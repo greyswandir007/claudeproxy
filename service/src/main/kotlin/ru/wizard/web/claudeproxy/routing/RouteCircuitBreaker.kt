@@ -9,8 +9,11 @@ package ru.wizard.web.claudeproxy.routing
 interface RouteCircuitBreaker {
 
     data class CooldownState(
+        /** Провайдер в кулдауне. */
         val providerName: String,
+        /** До какого момента, epoch millis. */
         val cooldownUntilMilliseconds: Long,
+        /** Причина (текст последней ошибки). */
         val reason: String,
     )
 
