@@ -629,6 +629,14 @@ export default function ProviderForm({
                 </button>
               </div>
             )}
+            {selectedSettingKey.length > 0 && (
+              <FieldHint
+                text={
+                  SETTING_CATALOG.find((d) => d.key === selectedSettingKey)?.description ??
+                  'Описание настройки недоступно.'
+                }
+              />
+            )}
           </div>
         </>
       ) : (
