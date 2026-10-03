@@ -23,12 +23,14 @@ class StatsController(
     private val conversationAffinityService: ru.wizard.web.claudeproxy.routing.ConversationAffinityService,
 ) {
 
+    /** Сводка периода: токены, запросы, ошибки. */
     @GetMapping("/api/summary")
     suspend fun summary(
         @RequestParam(defaultValue = "7d") range: String,
         @RequestParam(name = "key", required = false) clientKey: String?,
     ): StatsService.RangeSummary = statsService.summary(range, clientKey)
 
+    /** Группировка использования по моделям. */
     @GetMapping("/api/by-model")
     suspend fun byModel(
         @RequestParam(defaultValue = "7d") range: String,
@@ -38,6 +40,7 @@ class StatsController(
     ): List<StatsService.GroupedUsage> =
         statsService.byModel(range, clientKey, fromMilliseconds, toMilliseconds)
 
+    /** Группировка использования по провайдерам. */
     @GetMapping("/api/by-provider")
     suspend fun byProvider(
         @RequestParam(defaultValue = "7d") range: String,
@@ -47,11 +50,13 @@ class StatsController(
     ): List<StatsService.GroupedUsage> =
         statsService.byProvider(range, clientKey, fromMilliseconds, toMilliseconds)
 
+    /** Группировка использования по ключам клиентов. */
     @GetMapping("/api/by-key")
     suspend fun byClientKey(
         @RequestParam(defaultValue = "7d") range: String,
     ): List<StatsService.GroupedUsage> = statsService.byClientKey(range)
 
+    /** Текущее 5-часовое окно ключа. */
     @GetMapping("/api/window")
     suspend fun currentWindow(
         @RequestParam(name = "key") clientKey: String,
@@ -62,6 +67,7 @@ class StatsController(
         return ResponseEntity.ok(activeWindow)
     }
 
+    /** История окон ключа. */
     @GetMapping("/api/windows")
     suspend fun windowHistory(
         @RequestParam(name = "key") clientKey: String,
@@ -74,6 +80,7 @@ class StatsController(
         @RequestParam(defaultValue = "20") limit: Int,
     ): List<StatsService.ProviderWindowSummary> = statsService.providerWindowHistory(limit)
 
+    /** Таймлайн запросов по моделям. */
     @GetMapping("/api/timeline")
     suspend fun timeline(
         @RequestParam(defaultValue = "hour") bucket: String,
@@ -152,7 +159,7 @@ class StatsController(
     fun conversationAffinityStats(): ru.wizard.web.claudeproxy.routing.ConversationAffinityService.ConversationAffinityDiagnostics =
         conversationAffinityService.diagnostics()
 
-    /** Провайдеры и модели из реестра (read-only, без ключей провайдеров). */
+    /** Конфигурация и реестр (read-only): окна, видимые модели, маршруты провайдеров. */
     @GetMapping("/api/config")
     fun configuration(): Map<String, Any?> {
         val routesByProvider = modelRegistry.routes().groupBy { it.provider.name }

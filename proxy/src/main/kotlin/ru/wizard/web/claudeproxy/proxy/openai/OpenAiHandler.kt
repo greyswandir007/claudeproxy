@@ -15,6 +15,7 @@ import ru.wizard.web.claudeproxy.routing.ModelRegistry
  */
 interface OpenAiHandler {
 
+    /** Проксирование chat-запроса к OpenAI-провайдеру (стрим/JSON). */
     suspend fun chatCompletion(
         exchange: ServerWebExchange,
         routes: List<ModelRegistry.Route>,

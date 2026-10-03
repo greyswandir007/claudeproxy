@@ -24,6 +24,7 @@ class ClaudeSseToOpenAiSseTranslator(
     private var usageNode: ObjectNode? = null
     private var finished = false
 
+    /** Обрабатывает кусок Claude-SSE; возвращает OpenAI-чанки. */
     fun onChunk(text: String): List<String> {
         val events = ArrayList<String>()
         pendingLine.append(text)

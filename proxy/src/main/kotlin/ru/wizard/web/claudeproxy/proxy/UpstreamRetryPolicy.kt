@@ -10,6 +10,7 @@ import org.springframework.web.reactive.function.client.WebClientResponseExcepti
  */
 object UpstreamRetryPolicy {
 
+    /** Ретраебельна ли ошибка (сеть/таймаут). */
     fun isRetryable(error: Throwable): Boolean = when (error) {
         is UpstreamError -> isRetryableStatus(error.status.value())
         is WebClientRequestException -> true
@@ -19,6 +20,7 @@ object UpstreamRetryPolicy {
         else -> false
     }
 
+    /** Ретраебелен ли HTTP-статус (429/5xx). */
     fun isRetryableStatus(status: Int): Boolean =
         status == 408 || status == 429 || status >= 500
 
@@ -26,6 +28,7 @@ object UpstreamRetryPolicy {
      * Длительность кулдауна после повторимой ошибки: из retry-after (секунды),
      * иначе дефолт 30 с. Ограничен потолком в RouteCircuitBreaker.
      */
+    /** Кулдаун провайдера после ошибки. */
     fun cooldownMilliseconds(error: Throwable): Long {
         // retryAfter объявлен в другом модуле (model), smart cast напрямую невозможен
         val retryAfter = (error as? UpstreamError)?.retryAfter

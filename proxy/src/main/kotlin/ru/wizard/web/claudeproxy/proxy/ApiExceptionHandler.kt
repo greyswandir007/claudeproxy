@@ -16,6 +16,7 @@ import ru.wizard.web.claudeproxy.proxy.openai.inbound.OpenAiCompatibilityErrors
 @RestControllerAdvice
 class ApiExceptionHandler(private val objectMapper: ObjectMapper) {
 
+    /** Рендерит ApiError телом JSON в формате пути запроса. */
     @ExceptionHandler(ApiError::class)
     fun handle(error: ApiError, exchange: ServerWebExchange): ResponseEntity<String> {
         if (OpenAiCompatibilityErrors.isInboundPath(exchange.request.path.value())) {

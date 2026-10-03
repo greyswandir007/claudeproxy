@@ -19,6 +19,7 @@ import ru.wizard.web.claudeproxy.routing.ModelRegistry
  */
 interface AnthropicHandler {
 
+    /** Полный проход запроса к провайдеру (стриминг и JSON). */
     suspend fun passThrough(
         exchange: ServerWebExchange,
         routes: List<ModelRegistry.Route>,
@@ -34,6 +35,7 @@ interface AnthropicHandler {
      * retry-каскада (create/upload неидемпотентны), ответ возвращается
      * клиенту как есть, включая статус ошибки upstream.
      */
+    /** Проход нестримингового запроса: полный ответ одним телом. */
     suspend fun passThroughRequest(
         exchange: ServerWebExchange,
         route: ModelRegistry.Route,
@@ -48,6 +50,7 @@ interface AnthropicHandler {
      * клиента прокачиваются в upstream без разбора, с клиентским
      * Content-Type (включая boundary).
      */
+    /** Проход стримингового запроса: тело переливается чанками. */
     suspend fun passThroughStreamingBody(
         exchange: ServerWebExchange,
         route: ModelRegistry.Route,

@@ -23,9 +23,11 @@ class KeyController(
     private val objectMapper: ObjectMapper,
 ) {
 
+    /** Все клиентские ключи. */
     @GetMapping("/api/keys")
     suspend fun list(): List<KeyManagementService.ClientKey> = keyManagementService.list()
 
+    /** Создание ключа; полный секрет — только в этом ответе. */
     @PostMapping("/api/keys", consumes = [MediaType.APPLICATION_JSON_VALUE])
     suspend fun create(@RequestBody requestBody: String): ResponseEntity<KeyManagementService.CreatedKey> {
         val request = parseKeyRequest(requestBody)
@@ -39,6 +41,7 @@ class KeyController(
         @RequestBody requestBody: String,
     ): KeyManagementService.ClientKey = keyManagementService.update(id, parseKeyRequest(requestBody))
 
+    /** Отзыв ключа. */
     @PostMapping("/api/keys/{id}/revoke")
     suspend fun revoke(@PathVariable id: Long): Map<String, Boolean> {
         val revoked = keyManagementService.revoke(id)

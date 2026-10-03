@@ -132,6 +132,7 @@ class MessageBatchesController(
         )
     }
 
+    /** Метаданные батча. */
     @GetMapping("/v1/messages/batches/{batchId}")
     suspend fun retrieve(
         exchange: ServerWebExchange,
@@ -148,6 +149,7 @@ class MessageBatchesController(
             )
         }
 
+    /** Отмена незавершённого батча. */
     @PostMapping("/v1/messages/batches/{batchId}/cancel")
     suspend fun cancel(
         exchange: ServerWebExchange,

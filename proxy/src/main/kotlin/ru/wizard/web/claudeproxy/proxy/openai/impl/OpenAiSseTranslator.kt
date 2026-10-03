@@ -18,6 +18,7 @@ class OpenAiSseTranslator(
     private val objectMapper: ObjectMapper,
     private val publicModel: String,
 ) {
+    /** Накопитель usage из SSE-чанков OpenAI. */
     val usageAccumulator = UsageAccumulator()
 
     private var messageStarted = false
@@ -29,6 +30,7 @@ class OpenAiSseTranslator(
     private var pendingStopReason: String? = null
 
     /** Один data-payload SSE-события от провайдера → 0..n событий Claude. */
+    /** Обрабатывает data-payload OpenAI; возвращает SSE-строки Claude. */
     fun onData(payload: String?): List<String> {
         val events = ArrayList<String>()
         if (payload == null) return events

@@ -14,6 +14,7 @@ class OpenAiTokenCountEstimator {
      * Оценка числа токенов; [charactersPerToken] — выученный коэффициент
      * «символов на токен» (null — стандартное приближение 4 симв./токен).
      */
+    /** Оценка входных токенов OpenAI-запроса (калибровка или эвристика). */
     fun estimate(requestRoot: JsonNode, charactersPerToken: Double? = null): Long {
         val counts = textCounts(requestRoot)
         val ratio = charactersPerToken ?: DEFAULT_CHARACTERS_PER_TOKEN
@@ -21,12 +22,14 @@ class OpenAiTokenCountEstimator {
     }
 
     /** Число текстовых символов запроса — та же база, из которой [estimate] получает токены. */
+    /** Суммарная длина текстовых полей запроса, символы. */
     fun textCharacterCount(requestRoot: JsonNode): Long = textCounts(requestRoot).textCharacters
 
     /**
      * Фактические input_tokens ответа за вычётом фиксированной оценки картинок —
      * «текстовые» токены, на которых учится калибровка.
      */
+    /** Оценка выходных токенов по input_tokens ответа. */
     fun textTokenCount(requestRoot: JsonNode, inputTokens: Long): Long =
         inputTokens - textCounts(requestRoot).imageCount * TOKENS_PER_IMAGE
 

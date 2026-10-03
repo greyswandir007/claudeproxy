@@ -9,6 +9,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode
  */
 class ClaudeToOpenAiResponseTranslator(private val objectMapper: ObjectMapper) {
 
+    /** Переводит нестриминговый ответ Claude в формат OpenAI. */
     fun translate(claudeRoot: JsonNode, publicModel: String): ObjectNode {
         val message = objectMapper.createObjectNode().put("role", "assistant")
 

@@ -27,6 +27,7 @@ class ServerEventController(
 
     /** События журнала по фильтру, новые первыми. */
     @GetMapping
+    /** События сервера с фильтрами и пагинацией. */
     suspend fun serverEvents(
         @RequestParam(required = false) level: String?,
         @RequestParam(required = false) loggerContains: String?,
@@ -56,6 +57,7 @@ class ServerEventController(
     /** Полная очистка журнала (кнопка «Очистить» на странице «События»). */
     @DeleteMapping
     @ResponseStatus(HttpStatus.NO_CONTENT)
+    /** Полная очистка журнала событий. */
     suspend fun clearServerEvents() {
         databaseProvider.execute {
             jdbcTemplate.update("DELETE FROM server_event")

@@ -12,6 +12,7 @@ import ru.wizard.web.claudeproxy.routing.ModelRegistry
 @RestController
 class ModelsController(private val registry: ModelRegistry) {
 
+    /** Публично видимые модели в формате Anthropic. */
     @GetMapping("/v1/models")
     fun list(): Map<String, Any?> {
         val models = registry.exposedModels()
@@ -24,6 +25,7 @@ class ModelsController(private val registry: ModelRegistry) {
         )
     }
 
+    /** Одна модель по публичному имени. */
     @GetMapping("/v1/models/{id}")
     fun one(@PathVariable id: String): Map<String, Any?> =
         if (registry.isExposed(id)) {

@@ -18,9 +18,11 @@ import ru.wizard.web.claudeproxy.routing.ModelRegistry
 class ProviderRequestAdjuster(private val objectMapper: ObjectMapper) {
 
     /** Ключи оверрайдов, которые интерпретируются хендлерами отдельно (таймаут). */
+    /** Таймаут запроса из оверрайда SET-api-timeout-ms; null — дефолт. */
     fun apiTimeoutMilliseconds(provider: ModelRegistry.ProviderInfo): Long? =
         provider.settingOverrides[TIMEOUT_KEY]?.toLongOrNull()?.takeIf { it > 0 }
 
+    /** Применяет оверрайды заголовков и параметров запроса провайдера. */
     fun adjust(requestRoot: ObjectNode, provider: ModelRegistry.ProviderInfo): ObjectNode {
         applyEffortMapping(requestRoot, provider)
         applySettingOverrides(requestRoot, provider)

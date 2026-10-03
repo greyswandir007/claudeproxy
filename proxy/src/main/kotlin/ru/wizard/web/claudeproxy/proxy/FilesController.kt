@@ -83,6 +83,7 @@ class FilesController(
         )
     }
 
+    /** Метаданные файла. */
     @GetMapping("/v1/files/{fileId}")
     suspend fun retrieve(
         exchange: ServerWebExchange,

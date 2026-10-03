@@ -16,6 +16,7 @@ import ru.wizard.web.claudeproxy.routing.ModelRegistry
 class OpenAiRequestTranslator(private val objectMapper: ObjectMapper) {
     private val logger = KotlinLogging.logger {}
 
+    /** Переводит запрос Claude в формат OpenAI chat/completions. */
     fun translate(requestRoot: JsonNode, route: ModelRegistry.Route): ObjectNode {
         val mapping = route.mapping
         val target = objectMapper.createObjectNode()

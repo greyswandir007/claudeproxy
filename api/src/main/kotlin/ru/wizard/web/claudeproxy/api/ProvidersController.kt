@@ -43,10 +43,12 @@ class ProvidersController(
         return mapOf("models" to models)
     }
 
+    /** Все провайдеры с моделями. */
     @GetMapping("/api/providers")
     suspend fun listProviders(): List<ProviderModelService.ProviderView> =
         providerModelService.listProviders()
 
+    /** Создание провайдера. */
     @PostMapping("/api/providers", consumes = [MediaType.APPLICATION_JSON_VALUE])
     suspend fun createProvider(
         @RequestBody requestBody: String,
@@ -54,6 +56,7 @@ class ProvidersController(
         ResponseEntity.status(HttpStatus.CREATED)
             .body(providerModelService.createProvider(parseProviderRequest(requestBody)))
 
+    /** Обновление провайдера. */
     @PutMapping("/api/providers/{id}", consumes = [MediaType.APPLICATION_JSON_VALUE])
     suspend fun updateProvider(
         @PathVariable id: Long,
@@ -61,6 +64,7 @@ class ProvidersController(
     ): ProviderModelService.ProviderView =
         providerModelService.updateProvider(id, parseProviderRequest(requestBody))
 
+    /** Удаление провайдера вместе с моделями. */
     @DeleteMapping("/api/providers/{id}")
     suspend fun deleteProvider(@PathVariable id: Long): ResponseEntity<Void> {
         if (!providerModelService.deleteProvider(id)) {
@@ -69,6 +73,7 @@ class ProvidersController(
         return ResponseEntity.noContent().build()
     }
 
+    /** Добавление модели провайдеру. */
     @PostMapping("/api/providers/{id}/models", consumes = [MediaType.APPLICATION_JSON_VALUE])
     suspend fun createModel(
         @PathVariable id: Long,
@@ -77,6 +82,7 @@ class ProvidersController(
         ResponseEntity.status(HttpStatus.CREATED)
             .body(providerModelService.createModel(id, parseModelRequest(requestBody)))
 
+    /** Обновление модели. */
     @PutMapping("/api/models/{id}", consumes = [MediaType.APPLICATION_JSON_VALUE])
     suspend fun updateModel(
         @PathVariable id: Long,
@@ -84,6 +90,7 @@ class ProvidersController(
     ): ProviderModelService.ModelView =
         providerModelService.updateModel(id, parseModelRequest(requestBody))
 
+    /** Удаление модели. */
     @DeleteMapping("/api/models/{id}")
     suspend fun deleteModel(@PathVariable id: Long): ResponseEntity<Void> {
         if (!providerModelService.deleteModel(id)) {

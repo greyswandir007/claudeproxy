@@ -16,14 +16,17 @@ class OptimizerController(
     private val optimizerService: OptimizerService,
 ) {
 
+    /** Статистика оптимизатора. */
     @GetMapping("/api/optimizer/stats")
     fun stats(): ResponseEntity<OptimizerService.OptimizerStats> =
         ResponseEntity.ok(optimizerService.stats())
 
+    /** Конфиг оптимизатора. */
     @GetMapping("/api/optimizer/config")
     suspend fun config(): ResponseEntity<OptimizerService.OptimizerConfig> =
         ResponseEntity.ok(optimizerService.config())
 
+    /** Обновление конфига оптимизатора. */
     @PutMapping("/api/optimizer/config", consumes = [MediaType.APPLICATION_JSON_VALUE])
     suspend fun updateConfig(
         @RequestBody body: Map<String, Any?>,

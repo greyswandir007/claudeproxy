@@ -7,9 +7,11 @@ import com.fasterxml.jackson.databind.ObjectMapper
  * message_delta (output). Чанки могут разрывать строки — буферизуем до "\n".
  */
 class SseUsageSniffer(private val objectMapper: ObjectMapper) {
+    /** Накопитель usage из релейного SSE. */
     val usageAccumulator = UsageAccumulator()
     private val pendingLine = StringBuilder()
 
+    /** Сканит кусок SSE на usage-события. */
     fun onChunk(text: String) {
         pendingLine.append(text)
         while (true) {

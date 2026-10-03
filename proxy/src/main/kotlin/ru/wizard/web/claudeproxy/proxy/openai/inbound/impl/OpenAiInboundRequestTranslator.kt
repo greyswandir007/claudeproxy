@@ -11,6 +11,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode
  */
 class OpenAiInboundRequestTranslator(private val objectMapper: ObjectMapper) {
 
+    /** Переводит входящий OpenAI-запрос в формат Claude. */
     fun translate(openAiRoot: JsonNode): ObjectNode {
         val target = objectMapper.createObjectNode()
         target.put("model", openAiRoot.path("model").asText(""))

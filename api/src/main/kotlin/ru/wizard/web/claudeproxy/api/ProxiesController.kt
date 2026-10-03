@@ -22,17 +22,21 @@ class ProxiesController(
     private val objectMapper: ObjectMapper,
 ) {
 
+    /** Все прокси-эндпоинты. */
     @GetMapping("/api/proxies")
     suspend fun list(): List<ProxyEndpointView> = proxyEndpointService.listProxies()
 
+    /** Создание прокси-эндпоинта. */
     @PostMapping("/api/proxies", consumes = [MediaType.APPLICATION_JSON_VALUE])
     suspend fun create(@RequestBody body: String): ProxyEndpointView =
         proxyEndpointService.createProxy(parseProxyRequest(body))
 
+    /** Обновление прокси-эндпоинта. */
     @PutMapping("/api/proxies/{id}", consumes = [MediaType.APPLICATION_JSON_VALUE])
     suspend fun update(@PathVariable id: Long, @RequestBody body: String): ProxyEndpointView =
         proxyEndpointService.updateProxy(id, parseProxyRequest(body))
 
+    /** Удаление прокси-эндпоинта. */
     @DeleteMapping("/api/proxies/{id}")
     suspend fun delete(@PathVariable id: Long) {
         proxyEndpointService.deleteProxy(id)

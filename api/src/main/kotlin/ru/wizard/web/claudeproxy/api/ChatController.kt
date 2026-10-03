@@ -54,6 +54,7 @@ class ChatController(
         "messages" to chatHistory.messages(clientKey),
     )
 
+    /** Переименование треда чата. */
     @PutMapping("/thread")
     suspend fun renameThread(
         @RequestParam(name = "key") clientKey: String,
@@ -68,6 +69,7 @@ class ChatController(
         return mapOf("title" to title.trim())
     }
 
+    /** Очистка истории чата ключа. */
     @DeleteMapping("/messages")
     suspend fun clear(@RequestParam(name = "key") clientKey: String): Map<String, Boolean> {
         chatHistory.clear(clientKey)

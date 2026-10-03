@@ -13,10 +13,12 @@ class TokenCalibrationController(
     private val tokenCalibrationService: TokenCalibrationService,
 ) {
 
+    /** Записи калибровки токенов. */
     @GetMapping("/api/token-calibration")
     suspend fun entries(): ResponseEntity<List<TokenCalibrationEntry>> =
         ResponseEntity.ok(tokenCalibrationService.entries())
 
+    /** Сброс калибровки токенов. */
     @DeleteMapping("/api/token-calibration")
     suspend fun clear(): ResponseEntity<Void> {
         tokenCalibrationService.clear()

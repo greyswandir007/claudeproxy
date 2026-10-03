@@ -31,6 +31,7 @@ class TokenSavingAdjuster(
 ) {
     private val logger = KotlinLogging.logger {}
 
+    /** Подрезает запрос под бюджет оптимизатора; @return съэкономленные токены. */
     suspend fun adjust(requestRoot: ObjectNode, provider: ModelRegistry.ProviderInfo): Long {
         var savedTokens = 0L
         val overrides = provider.settingOverrides

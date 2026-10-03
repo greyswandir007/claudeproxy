@@ -13,6 +13,7 @@ import ru.wizard.web.claudeproxy.proxy.UpstreamError
  */
 class OpenAiErrorTranslator(private val objectMapper: ObjectMapper) {
 
+    /** Переводит ошибку OpenAI-провайдера в UpstreamError. */
     fun translate(entity: ResponseEntity<String>): UpstreamError {
         val upstreamBody = entity.body ?: ""
         val message = extractMessage(upstreamBody)

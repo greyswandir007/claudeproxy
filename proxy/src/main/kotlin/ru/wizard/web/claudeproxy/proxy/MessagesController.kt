@@ -30,6 +30,7 @@ class MessagesController(
     private val conversationAffinityService: ConversationAffinityService,
 ) {
 
+    /** Главный эндпоинт: проксирование /v1/messages (SSE и JSON). */
     @PostMapping("/v1/messages", consumes = [MediaType.APPLICATION_JSON_VALUE])
     fun messages(
         @RequestBody requestBody: String,
@@ -37,6 +38,7 @@ class MessagesController(
     ): Mono<ResponseEntity<Flux<DataBuffer>>> =
         handle(requestBody, exchange, "/v1/messages", recordUsage = true)
 
+    /** Подсчёт токенов запроса (кэш + оценка или апстрим). */
     @PostMapping("/v1/messages/count_tokens", consumes = [MediaType.APPLICATION_JSON_VALUE])
     fun countTokens(
         @RequestBody requestBody: String,

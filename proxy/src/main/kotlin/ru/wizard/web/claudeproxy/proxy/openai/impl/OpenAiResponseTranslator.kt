@@ -20,6 +20,7 @@ class OpenAiResponseTranslator(private val objectMapper: ObjectMapper) {
         val stopReason: String,
     )
 
+    /** Переводит нестриминговый ответ OpenAI в формат Claude message. */
     fun translate(openAiResponseBody: String?, publicModel: String): TranslatedResponse {
         val root = runCatching { objectMapper.readTree(openAiResponseBody ?: "") }.getOrNull()
             ?: throw ApiError(

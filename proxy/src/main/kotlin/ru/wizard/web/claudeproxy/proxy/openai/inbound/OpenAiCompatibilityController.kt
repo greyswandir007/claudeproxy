@@ -43,6 +43,7 @@ class OpenAiCompatibilityController(
     private val requestTranslator = OpenAiInboundRequestTranslator(objectMapper)
     private val responseTranslator = ClaudeToOpenAiResponseTranslator(objectMapper)
 
+    /** Входящая OpenAI-совместимость: chat/completions на маршрутах Claude. */
     @PostMapping("/v1/chat/completions", consumes = [MediaType.APPLICATION_JSON_VALUE])
     fun chatCompletions(
         @RequestBody requestBody: String,
