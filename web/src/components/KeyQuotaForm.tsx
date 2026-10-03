@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { api, type ClientKey, type CreatedKey } from '../api/client'
+import { FieldHint } from './FieldHint'
 
 // Форма квот ключа: «Безлимит» (по умолчанию) или квоты — allowlist моделей
 // и лимиты токенов на окно/месяц (в млн, пусто = безлимит по измерению).
@@ -79,6 +80,7 @@ export default function KeyQuotaForm({
               maxLength={64}
               onChange={(event) => setName(event.target.value)}
             />
+            <FieldHint text="Ключ примет вид cpk_<имя>-<случайный суффикс>; полный секрет показывается один раз при создании." />
           </label>
         </div>
       )}
@@ -104,6 +106,7 @@ export default function KeyQuotaForm({
                 placeholder="безлимит"
                 onChange={(event) => setLimitWindowTokens(event.target.value)}
               />
+              <FieldHint text="Скользящее 5-часовое окно — как лимит подписки Claude; при превышении запросы отклоняются до конца окна." />
             </label>
             <label>
               Квота токенов на месяц (30 дней), млн
@@ -115,6 +118,7 @@ export default function KeyQuotaForm({
                 placeholder="безлимит"
                 onChange={(event) => setLimitMonthTokens(event.target.value)}
               />
+              <FieldHint text="Скользящие 30 дней; считается независимо от окна. Пустое поле = безлимит по измерению." />
             </label>
           </div>
           <div className="overrides-block">

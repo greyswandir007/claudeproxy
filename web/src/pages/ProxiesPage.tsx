@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { api, type ProxyEndpoint } from '../api/client'
+import { FieldHint } from '../components/FieldHint'
 
 /**
  * M31: прокси/туннели доступа к провайдерам — список, добавление,
@@ -184,6 +185,7 @@ function ProxyForm({
         <label>
           Имя:{' '}
           <input type="text" value={name} onChange={(event) => setName(event.target.value)} />
+          <FieldHint text="Уникальное имя; на него ссылаются провайдеры в поле «Прокси»." />
         </label>
         <label>
           Тип:{' '}
@@ -193,6 +195,7 @@ function ProxyForm({
             <option value="SOCKS4">SOCKS4</option>
             <option value="SOCKS5">SOCKS5</option>
           </select>
+          <FieldHint text="HTTP/HTTPS — CONNECT-туннель (TLS остаётся сквозным); SOCKS — прямая маршрутизация." />
         </label>
         <label>
           Host:{' '}
@@ -209,6 +212,7 @@ function ProxyForm({
         <label>
           Логин:{' '}
           <input type="text" value={username} onChange={(event) => setUsername(event.target.value)} />
+          <FieldHint text="Пусто — прокси без авторизации." />
         </label>
         <label>
           Пароль:{' '}
@@ -218,6 +222,7 @@ function ProxyForm({
             placeholder={proxy?.hasPassword ? 'оставить прежний' : ''}
             onChange={(event) => setPassword(event.target.value)}
           />
+          <FieldHint text="Допускается ${ENV:ИМЯ}-ссылка. При редактировании пусто = не менять; стереть нельзя, только перезаписать." />
         </label>
         <label className="checkbox-label">
           <input
@@ -226,6 +231,7 @@ function ProxyForm({
             onChange={(event) => setEnabled(event.target.checked)}
           />
           Включён
+          <FieldHint text="Выключенный прокси не используется — провайдеры идут напрямую." />
         </label>
       </div>
       {error && <div className="error-banner">{error}</div>}

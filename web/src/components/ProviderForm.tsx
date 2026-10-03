@@ -5,6 +5,7 @@ import {
   SETTING_CATALOG,
   type ManagedProvider,
 } from '../api/client'
+import { FieldHint } from './FieldHint'
 import KeyValueRows from './KeyValueRows'
 
 // Форма провайдера. Базовый набор: имя, тип, base-url, api-ключ.
@@ -281,6 +282,7 @@ export default function ProviderForm({
             placeholder="например openrouter"
             onChange={(event) => setName(event.target.value)}
           />
+          <FieldHint text="Уникальное имя провайдера; фигурирует в статистике, использовании и привязке моделей." />
         </label>
         <label>
           Тип
@@ -288,6 +290,7 @@ export default function ProviderForm({
             <option value="openai">openai (перевод протокола)</option>
             <option value="anthropic">anthropic (pass-through)</option>
           </select>
+          <FieldHint text="anthropic — прозрачный проход Claude API; openai — полный перевод Claude ↔ OpenAI (tool calls, стриминг)." />
         </label>
         <label className="form-wide">
           base-url
@@ -297,6 +300,7 @@ export default function ProviderForm({
             placeholder="https://openrouter.ai/api/v1"
             onChange={(event) => setBaseUrl(event.target.value)}
           />
+          <FieldHint text="Корень API провайдера без /v1 — путь эндпоинта прокси добавит сам." />
         </label>
         <label className="form-wide">
           Прокси (M31)
@@ -308,6 +312,7 @@ export default function ProviderForm({
               </option>
             ))}
           </select>
+          <FieldHint text="Все исходящие вызовы провайдера (чат, файлы, OAuth, оптимизатор) пойдут через выбранный прокси." />
         </label>
         <label className="form-wide">
           Авторизация
@@ -315,6 +320,7 @@ export default function ProviderForm({
             <option value="api_key">api-ключ</option>
             <option value="oauth">OAuth</option>
           </select>
+          <FieldHint text="OAuth — для провайдеров с client_credentials или refresh_token; токен обновляется автоматически." />
         </label>
         {authType === 'api_key' ? (
           <label className="form-wide">
@@ -330,6 +336,7 @@ export default function ProviderForm({
               placeholder={isEditMode ? 'не менять' : 'ключ или ${ENV_VAR}'}
               onChange={(event) => setApiKey(event.target.value)}
             />
+            <FieldHint text="Литерал или ${ENV:ИМЯ}-ссылка; при редактировании пусто = не менять." />
           </label>
         ) : (
           <>
@@ -344,6 +351,7 @@ export default function ProviderForm({
                 <option value="client_credentials">client_credentials</option>
                 <option value="refresh_token">refresh_token</option>
               </select>
+              <FieldHint text="client_credentials — серверная авторизация по client_id/secret; refresh_token — доступ по пользовательскому токену с ротацией." />
             </label>
             <label>
               client_id
@@ -535,57 +543,62 @@ export default function ProviderForm({
           </div>
           <div className="overrides-block">
             <div className="key-value-title">Оверрайды входных параметров</div>
-            {Object.entries(settingOverrides).map(([key, value]) => (
-              <div key={key} className="discovered-row">
-                <span className="override-name" title={SETTING_CATALOG.find((d) => d.key === key)?.description}>
-                  {SETTING_CATALOG.find((d) => d.key === key)?.title ?? key}
-                </span>
-                {(() => {
-                  const definition = SETTING_CATALOG.find((d) => d.key === key)
-                  if (definition?.values && definition.values.length > 0) {
-                    return (
-                      <select
-                        className="discovered-public-name"
-                        value={value}
-                        onChange={(event) =>
-                          setSettingOverrides((current) => ({ ...current, [key]: event.target.value }))
-                        }
-                      >
-                        {definition.values.map((variant) => (
-                          <option key={variant} value={variant}>
-                            {variant}
-                          </option>
-                        ))}
-                      </select>
-                    )
-                  }
-                  return (
-                    <input
-                      type="text"
-                      className="discovered-public-name"
-                      value={value}
-                      placeholder={definition?.placeholder ?? 'значение'}
-                      onChange={(event) =>
-                        setSettingOverrides((current) => ({ ...current, [key]: event.target.value }))
+            {Object.entries(settingOverrides).map(([key, value]) => {
+              const definition = SETTING_CATALOG.find((d) => d.key === key)
+              return (
+                <div key={key}>
+                  <div className="discovered-row">
+                    <span className="override-name">
+                      {definition?.title ?? key}
+                    </span>
+                    {(() => {
+                      if (definition?.values && definition.values.length > 0) {
+                        return (
+                          <select
+                            className="discovered-public-name"
+                            value={value}
+                            onChange={(event) =>
+                              setSettingOverrides((current) => ({ ...current, [key]: event.target.value }))
+                            }
+                          >
+                            {definition.values.map((variant) => (
+                              <option key={variant} value={variant}>
+                                {variant}
+                              </option>
+                            ))}
+                          </select>
+                        )
                       }
-                    />
-                  )
-                })()}
-                <button
-                  type="button"
-                  className="button button-danger button-small"
-                  onClick={() =>
-                    setSettingOverrides((current) => {
-                      const next = { ...current }
-                      delete next[key]
-                      return next
-                    })
-                  }
-                >
-                  ✕
-                </button>
-              </div>
-            ))}
+                      return (
+                        <input
+                          type="text"
+                          className="discovered-public-name"
+                          value={value}
+                          placeholder={definition?.placeholder ?? 'значение'}
+                          onChange={(event) =>
+                            setSettingOverrides((current) => ({ ...current, [key]: event.target.value }))
+                          }
+                        />
+                      )
+                    })()}
+                    <button
+                      type="button"
+                      className="button button-danger button-small"
+                      onClick={() =>
+                        setSettingOverrides((current) => {
+                          const next = { ...current }
+                          delete next[key]
+                          return next
+                        })
+                      }
+                    >
+                      ✕
+                    </button>
+                  </div>
+                  {definition?.description && <FieldHint text={definition.description} />}
+                </div>
+              )
+            })}
             {availableSettingKeys(settingOverrides).length > 0 && (
               <div className="add-override-row">
                 <select

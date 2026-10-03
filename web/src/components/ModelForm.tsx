@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { api, type ManagedModel, type ManagedProvider } from '../api/client'
+import { FieldHint } from './FieldHint'
 
 // Форма модели. Базовый набор: публичное имя, upstream-имя (выбор из списка
 // моделей провайдера — список подгружается автоматически при открытии формы
@@ -100,6 +101,7 @@ export default function ModelForm({
               placeholder="например gpt-5.2"
               onChange={(event) => setPublicName(event.target.value)}
             />
+            <FieldHint text="Имя, которое клиенты указывают в поле model запроса; может отличаться от имени у провайдера." />
           </label>
           <label className="checkbox-label">
             <input
@@ -154,6 +156,7 @@ export default function ModelForm({
               <option value="map">map (переводить)</option>
               <option value="off">off (не переводить)</option>
             </select>
+            <FieldHint text="Как переводить thinking-параметр Claude в reasoning_effort провайдера (для openai-типа)." />
           </label>
           <label>
             Приоритет (меньше = выше; fallback при ошибках; одинаковый приоритет = round-robin)
@@ -172,6 +175,7 @@ export default function ModelForm({
               onChange={(event) => setMaxCompletionParam(event.target.checked)}
             />
             шлёт max_completion_tokens (o-серия)
+            <FieldHint text="Для моделей o-серии OpenAI, которые не принимают max_tokens." />
           </label>
         </div>
       ) : (
