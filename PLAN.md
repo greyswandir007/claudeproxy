@@ -1321,6 +1321,9 @@ http://-целей) — тестовый `FakeHttpProxy` умеет CONNECT; в 
    покрытия), JdbcServerEventRetentionService, SqliteBackupService, OAuth
    expiry/ошибка, OpenAI-compat edge cases, ApiCacheControlWebFilter.
    Сначала проверить WebClientUsageService на мёртвый код.
+   Примечание по факту: CanonicalJsonSerializer — internal object модуля
+   service, из app-тестов недоступен; покрыт косвенно тестами кэша запросов,
+   прямой юнит-тест потребовал бы смены видимости — отложено.
 5. **Документация.** README сократить до «что это + быстрый старт», добавить
    M30/M31 в возможности; создать `docs/architecture.md` (модули, поток
    запроса, маршрутизация/affinity/кулдауны/breaker, оптимизатор, кэш, БД),
