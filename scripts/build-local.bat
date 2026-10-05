@@ -31,7 +31,7 @@ copy /b "%PROJECT_ROOT%\app\src\main\resources\application.yml" ^
       "%STAGING%\BOOT-INF\classes\application.yml" >nul
 if errorlevel 1 goto :error
 
-copy /y "%PROJECT_ROOT%\app\build\libs\claudeproxy-0.0.1-SNAPSHOT.jar" "%RUN_DIR%\claudeproxy.jar" >nul
+copy /y "%PROJECT_ROOT%\app\build\libs\claudeproxy-0.1.0.jar" "%RUN_DIR%\claudeproxy.jar" >nul
 if errorlevel 1 goto :error
 
 cd /d "%STAGING%"

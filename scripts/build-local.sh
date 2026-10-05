@@ -25,7 +25,7 @@ mkdir -p "$STAGING/BOOT-INF/classes"
 cat app/src/main/resources/application.yml scripts/local-defaults.yml \
     > "$STAGING/BOOT-INF/classes/application.yml"
 
-cp app/build/libs/claudeproxy-0.0.1-SNAPSHOT.jar "$RUN_DIR/claudeproxy.jar"
+cp app/build/libs/claudeproxy-0.1.0.jar "$RUN_DIR/claudeproxy.jar"
 cd "$STAGING"
 jar uf "$RUN_DIR/claudeproxy.jar" BOOT-INF/classes/application.yml
 cd - >/dev/null

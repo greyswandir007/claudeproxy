@@ -50,9 +50,22 @@ val npmCommand: String? = if (org.gradle.internal.os.OperatingSystem.current().i
 	"npm"
 }
 
+val installDashboardDependencies = tasks.register<Exec>("installDashboardDependencies") {
+	group = "build"
+	description = "Установка зависимостей дашборда (npm install)"
+	onlyIf { npmCommand != null }
+	workingDir = webDashboardDir.asFile
+	args("install", "--no-audit", "--no-fund")
+	inputs.file(webDashboardDir.file("package.json"))
+	inputs.file(webDashboardDir.file("package-lock.json"))
+	outputs.file(webDashboardDir.file("node_modules/.package-lock.json"))
+	doFirst { executable = npmCommand!! }
+}
+
 val buildDashboard = tasks.register<Exec>("buildDashboard") {
 	group = "build"
 	description = "Сборка веб-дашборда (npm run build) в web/dist"
+	dependsOn(installDashboardDependencies)
 	onlyIf { npmCommand != null }
 	workingDir = webDashboardDir.asFile
 	args("run", "build")

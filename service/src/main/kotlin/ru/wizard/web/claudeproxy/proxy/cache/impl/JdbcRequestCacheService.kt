@@ -49,8 +49,8 @@ internal class JdbcRequestCacheService(
 
     override fun buildCacheKey(upstreamPath: String, requestRoot: JsonNode): RequestCacheService.RequestCacheKey {
         // stream и metadata не влияют на содержание ответа — в ключ не входят
-        // (см. PLAN.md, бэклог «средние», п.5): стримовый и не-стримовый повтор
-        // одного запроса делят одну запись кэша.
+        // (см. docs/architecture.md, раздел «Кэш запросов»): стримовый и
+        // не-стримовый повтор одного запроса делят одну запись кэша.
         // model в ключе — публичное имя из тела клиента (маппинг на провайдерское
         // происходит позже, в мутированной копии), хэширование не меняется.
         val model = requestRoot.path("model").asText("")

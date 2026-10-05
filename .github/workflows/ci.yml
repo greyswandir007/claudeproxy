@@ -32,3 +32,34 @@ jobs:
           name: test-results
           path: app/build/test-results/
           if-no-files-found: ignore
+
+  full-build:
+    name: Full build with dashboard
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Build bootJar (tests + dashboard included)
+        run: ./gradlew bootJar
+
+      - name: Upload jar
+        uses: actions/upload-artifact@v4
+        with:
+          name: claudeproxy-jar
+          path: app/build/libs/claudeproxy-*.jar
+          if-no-files-found: error

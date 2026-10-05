@@ -2,6 +2,11 @@
   "name": "claudeproxy-dashboard",
   "private": true,
   "version": "0.1.0",
+  "description": "Dashboard SPA for claudeproxy (built into the app jar)",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20.19"
+  },
   "type": "module",
   "scripts": {
     "dev": "vite",

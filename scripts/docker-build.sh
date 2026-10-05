@@ -6,7 +6,7 @@ cd "$(dirname "$0")/.."
 ./gradlew test
 ./gradlew bootJar
 
-if [ ! -f "app/build/libs/claudeproxy-0.0.1-SNAPSHOT.jar" ]; then
+if [ ! -f "app/build/libs/claudeproxy-0.1.0.jar" ]; then
     echo "Docker build failed: jar not found" 1>&2
     exit 1
 fi

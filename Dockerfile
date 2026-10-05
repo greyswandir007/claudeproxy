@@ -14,7 +14,7 @@ RUN useradd --system --no-create-home --shell /usr/sbin/nologin claudeproxy \
     && mkdir -p /app/data /app/config \
     && chown -R claudeproxy:claudeproxy /app
 
-COPY app/build/libs/claudeproxy-0.0.1-SNAPSHOT.jar claudeproxy.jar
+COPY app/build/libs/claudeproxy-0.1.0.jar claudeproxy.jar
 
 USER claudeproxy
 EXPOSE 8080

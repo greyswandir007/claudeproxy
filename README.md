@@ -1,109 +1,109 @@
 # claudeproxy
 
-Локальный шлюз (Kotlin, Spring WebFlux) между Claude-клиентами и
-LLM-провайдерами: подменяет `api.anthropic.com` для Anthropic-совместимых
-провайдеров и переводит протокол для OpenAI-совместимых, ведёт учёт токенов
-и 5-часовых окон «как у подписки Claude», ретраит/переключает провайдеров и
-отдаёт дашборд для управления.
+A local gateway (Kotlin, Spring WebFlux) between Claude clients and LLM
+providers: it stands in for `api.anthropic.com` for Anthropic-compatible
+providers, translates the protocol for OpenAI-compatible ones, tracks token
+usage with Claude-subscription-style 5-hour windows, retries and fails over
+between providers, and ships a built-in dashboard.
 
-Подробности: [docs/architecture.md](docs/architecture.md) — устройство;
-[docs/settings.md](docs/settings.md) — справочник настроек;
-[docs/api.md](docs/api.md) — эндпоинты. Внутренний журнал разработки — PLAN.md.
+> Documentation in [`docs/`](docs/) is written in Russian.
 
-## Возможности
+- [docs/architecture.md](docs/architecture.md) — how it works inside
+- [docs/settings.md](docs/settings.md) — configuration reference
+- [docs/api.md](docs/api.md) — HTTP endpoints
 
-- **Прозрачное проксирование Claude API**: `/v1/messages` (SSE и JSON,
-  tool calls, thinking, beta-заголовки), `/v1/messages/count_tokens`,
-  `/v1/models`, Batches API, файлы.
-- **Перевод Claude ↔ OpenAI**: OpenAI-провайдеры работают через те же
-  публичные модели, включая стриминг и tool calls; входящая
-  OpenAI-совместимость — `POST /v1/chat/completions` для любых моделей.
-- **Маршрутизация и отказоустойчивость**: приоритеты + round-robin,
-  ретраи и fallback на следующий провайдер, кулдауны, sticky-аффинность
-  разговоров (сохранение промпт-кэша апстрима).
-- **Клиентские ключи и окна**: ключи прокси с SHA-256-хэшами, квоты
-  (окно/неделя/30 дней), 5-часовые окна как у подписки Claude.
-- **Учёт и аналитика**: usage по моделям/провайдерам/ключам, таймлайн,
-  задержки, стоимость (per_million / monthly), детали ошибок.
-- **Кэш запросов**: идемпотентные запросы по SHA-256 канонического тела;
-  стриминговые ответы воспроизводятся из кэша (TTL 5 мин / 1 ч).
-- **Оптимизатор токенов** (M30): модель-сжатие старых `tool_result`
-  с кэшем, breaker'ом и статистикой экономии.
-- **Прокси-эндпоинты** (M31): исходящие вызовы провайдера — через
-  HTTP(S)-CONNECT или SOCKS4/5, с проверкой связности из UI.
-- **Калибровка count_tokens** для openai-провайдеров по фактическим ответам.
-- **Дашборд** (React): модели/провайдеры, ключи, окна, события сервера,
-  встроенный чат-плейграунд; Basic Auth по желанию.
-- **Хранилище**: SQLite (файл, снапшот-бэкапы по cron) или PostgreSQL.
+## Features
 
-## Быстрый старт
+- **Transparent Claude API proxying**: `/v1/messages` (SSE and JSON, tool
+  calls, thinking, beta headers), `/v1/messages/count_tokens`,
+  `/v1/models`, the Batches API, files.
+- **Claude ↔ OpenAI protocol translation**: OpenAI providers serve the same
+  public models, including streaming and tool calls; inbound OpenAI
+  compatibility — `POST /v1/chat/completions` — works for every model.
+- **Routing and resilience**: priorities + round-robin, retries and
+  failover to the next provider, cooldowns, sticky conversation affinity
+  (preserves upstream prompt cache).
+- **Client keys and windows**: proxy keys with SHA-256 hashes, quotas
+  (window / week / 30 days), 5-hour windows like a Claude subscription.
+- **Usage analytics**: usage by model/provider/key, timeline, latency,
+  costs (per_million / monthly), error details.
+- **Request cache**: idempotent requests deduplicated by canonical-body
+  SHA-256; streamed answers are replayed from cache (TTL 5 min / 1 h).
+- **Token optimizer**: an optional model-driven compressor for old
+  `tool_result` history, with caching, a breaker and savings statistics.
+- **Provider proxies**: outbound calls of a provider can go through an
+  HTTP(S) CONNECT or SOCKS4/5 endpoint, with a connectivity check in the UI.
+- **count_tokens calibration** for OpenAI providers, learned from actual
+  responses.
+- **Dashboard** (React): models/providers, keys, windows, server events, a
+  built-in chat playground; optional Basic Auth.
+- **Storage**: SQLite (single file, scheduled snapshot backups) or
+  PostgreSQL.
 
-Требуется JDK 25. Сборка и запуск в dev-режиме:
+## Quick start
+
+Requires JDK 21+. Build and run in dev mode:
 
 ```bash
 ./gradlew :app:bootRun          # http://localhost:8080, SQLite data/claudeproxy.db
 ```
 
-Прод (`scripts/`):
+Production build (adds the dashboard; needs Node.js 20.19+ for the web
+build):
 
 ```bash
-scripts/build            # чистая сборка + bootJar + копирование в app/build/libs
-scripts/build-local      # то же + jar с запечённым портом 9090 (scripts/run-local)
+./gradlew bootJar               # app/build/libs/claudeproxy-0.1.0.jar
+java -jar app/build/libs/claudeproxy-0.1.0.jar
 ```
 
-Первичная настройка — в дашборде: создать провайдера (тип, base URL,
-api-ключ), добавить модель с публичным именем, создать ключ клиента
-(секрет показывается один раз).
+Initial setup happens in the dashboard: create a provider (type, base URL,
+API key), add a model with a public name, create a client key (the secret
+is shown once). An annotated configuration example lives in
+[`config/application.example.yml`](config/application.example.yml).
 
-### Подключение клиентов
+### Connecting clients
 
 ```bash
 # Claude Code
 export ANTHROPIC_BASE_URL=http://localhost:8080
-export ANTHROPIC_AUTH_TOKEN=cpk_...        # или ANTHROPIC_API_KEY
+export ANTHROPIC_AUTH_TOKEN=cpk_...        # or ANTHROPIC_API_KEY
 
-# OpenAI SDK (входящая совместимость)
+# OpenAI SDK (inbound compatibility)
 client.base_url = "http://localhost:8080/v1"
 client.api_key  = "cpk_..."
 ```
 
-curl-проверка:
+A curl smoke test:
 
 ```bash
 curl http://localhost:8080/v1/messages \
   -H "x-api-key: cpk_..." -H "content-type: application/json" \
-  -d '{"model":"claude-sonnet-4-5","max_tokens":64,"messages":[{"role":"user","content":"привет"}]}'
+  -d '{"model":"claude-sonnet-4-5","max_tokens":64,"messages":[{"role":"user","content":"hi"}]}'
 ```
 
-## Прод-заметки
+## Production notes
 
-- Слушать наружу — только вместе с Basic Auth дашборда
-  (`claudeproxy.dashboard.auth`, см. [docs/settings.md](docs/settings.md)).
-- Клиентские ключи хранятся хэшами SHA-256 и не логируются; секреты
-  провайдеров можно держать в `${ENV_VAR}`-ссылках.
-- Логи — по умолчанию человекочитаемые; `SPRING_PROFILES_ACTIVE=json`
-  переключает в построчный JSON. WARN/ERROR дополнительно попадают в
-  журнал событий дашборда.
-- Бэкапы SQLite — `claudeproxy.backup.*` (по умолчанию выключено);
-  для PostgreSQL используйте `pg_dump`.
-- Миграции применяются при старте; наборы по диалектам —
-  `database/src/main/resources/db/migration/{sqlite,postgres}/`.
+- Expose the dashboard beyond localhost only together with its Basic Auth
+  (`claudeproxy.dashboard.auth`, see [docs/settings.md](docs/settings.md)).
+- Client keys are stored as SHA-256 hashes and never logged; provider
+  secrets can be kept as `${ENV_VAR}` references.
+- Logs are human-readable by default; `SPRING_PROFILES_ACTIVE=json`
+  switches to line-delimited JSON. WARN/ERROR also land in the dashboard
+  event journal.
+- SQLite backups — `claudeproxy.backup.*` (off by default); for PostgreSQL
+  use `pg_dump`.
+- Migrations apply on startup; per-dialect sets live in
+  `database/src/main/resources/db/migration/`.
 
-## Каталоги и файлы
+## Development
 
-| Путь | Назначение |
-| --- | --- |
-| `app/build/libs/claudeproxy-*.jar` | собранный fat-jar |
-| `data/claudeproxy.db` | SQLite по умолчанию |
-| `config/application.example.yml` | аннотированный пример настроек |
-| `database/src/main/resources/db/migration/` | SQL-миграции (по диалектам) |
-| `web/` | исходники дашборда (React + TS + Vite) |
-| `scripts/` | bat/sh-скрипты сборки и запуска |
-| `docs/` | документация (этот набор) |
+`./gradlew build` compiles, runs all tests (unit + integration with
+in-process reactor-netty fakes; test databases are isolated under
+`build/test`) and builds the dashboard when Node.js is available. Dashboard
+frontend: `cd web && npm install && npm run dev` (Vite dev server proxies
+`/api` to the backend). Code conventions — see [CLAUDE.md](CLAUDE.md);
+contributions are welcome, see [CONTRIBUTING.md](CONTRIBUTING.md).
 
-## Разработка
+## License
 
-`./gradlew build` — вся сборка и тесты (модульные + интеграционные,
-включая тестовые серверы на reactor-netty; тестовые БД изолированы в
-`build/test`). Дашборд: `cd web && npm install && npm run dev` (dev-сервер
-Vite проксирует `/api` на бэкенд). Кодстайл — см. CLAUDE.md.
+[MIT](LICENSE)
