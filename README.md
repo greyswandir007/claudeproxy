@@ -8,6 +8,8 @@ between providers, and ships a built-in dashboard.
 
 > Documentation in [`docs/`](docs/) is written in Russian.
 
+- [docs/quickstart.md](docs/quickstart.md) — from a fresh clone to the first request
+- [docs/usage.md](docs/usage.md) — everyday usage guide
 - [docs/architecture.md](docs/architecture.md) — how it works inside
 - [docs/settings.md](docs/settings.md) — configuration reference
 - [docs/api.md](docs/api.md) — HTTP endpoints
