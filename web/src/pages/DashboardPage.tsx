@@ -40,6 +40,7 @@ const DAY = 86_400_000
 const DASHBOARD_SECTIONS = [
   { id: 'overview', title: 'Обзор' },
   { id: 'analytics', title: 'Аналитика' },
+  { id: 'windows', title: 'Окна' },
   { id: 'providers', title: 'Провайдеры' },
   { id: 'optimization', title: 'Оптимизация' },
 ] as const
@@ -440,7 +441,7 @@ export default function DashboardPage({ refreshTick }: { refreshTick: number }) 
           <OptimizerCard refreshTick={refreshTick} />
         </>
       )}
-      {dashboardSection === 'analytics' && keyParameter && (
+      {dashboardSection === 'windows' && keyParameter && (
         <WindowHistoryTable windows={windows} providerWindows={providerWindows} />
       )}
     </div>
