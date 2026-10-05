@@ -57,6 +57,7 @@ export interface TimelinePoint {
   outputTokens: number
   cacheCreationTokens: number
   cacheReadTokens: number
+  savedTokens: number
 }
 
 export interface ClientKey {

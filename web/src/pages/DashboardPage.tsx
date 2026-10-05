@@ -26,13 +26,13 @@ import ProviderLimitBars from '../components/ProviderLimitBars'
 import RoutingHealth from '../components/RoutingHealth'
 import RequestCacheCard from '../components/RequestCacheCard'
 import OptimizerCard from '../components/OptimizerCard'
-import TimelineChart, { TOTAL_SERIES, pivotGroupedTimeline } from '../components/TimelineChart'
+import TimelineChart, { SAVINGS_SERIES, TOTAL_SERIES, pivotGroupedTimeline } from '../components/TimelineChart'
 import UsageTable from '../components/UsageTable'
 import WindowCard from '../components/WindowCard'
 import WindowHistoryTable from '../components/WindowHistoryTable'
 
 /** Срез таймлайна. */
-type SliceMode = 'total' | 'model' | 'provider'
+type SliceMode = 'total' | 'model' | 'provider' | 'savings'
 
 const DAY = 86_400_000
 
@@ -225,26 +225,51 @@ export default function DashboardPage({ refreshTick }: { refreshTick: number }) 
     const from = effectiveRange.fromMilliseconds
     const to = effectiveRange.toMilliseconds
     const timelineRequest =
-      sliceMode === 'total'
+      sliceMode === 'total' || sliceMode === 'savings'
         ? api
             .timelineRange(bucket, keyParameter, from, to)
             .then((points: TimelinePoint[]) => {
-              setTimelineRows(
-                fillTimelineGaps(
-                  points.map((point) => ({
-                    sortKey: point.bucketStartMilliseconds,
-                    label: formatBucketLabel(point.bucketStartMilliseconds, bucket),
-                    inputTokens: point.inputTokens,
-                    outputTokens: point.outputTokens,
-                    cacheReadTokens: point.cacheReadTokens,
-                    cacheCreationTokens: point.cacheCreationTokens,
-                  })),
-                  from,
-                  to,
-                  bucket,
-                ),
-              )
-              setTimelineLabels(TOTAL_SERIES.map((series) => ({ ...series })))
+              if (sliceMode === 'savings') {
+                setTimelineRows(
+                  fillTimelineGaps(
+                    points.map((point) => ({
+                      sortKey: point.bucketStartMilliseconds,
+                      label: formatBucketLabel(point.bucketStartMilliseconds, bucket),
+                      totalTokens:
+                        point.inputTokens +
+                        point.outputTokens +
+                        point.cacheCreationTokens +
+                        point.cacheReadTokens +
+                        point.savedTokens,
+                      spentTokens:
+                        point.inputTokens + point.outputTokens + point.cacheCreationTokens + point.cacheReadTokens,
+                      savedTokens: point.savedTokens,
+                    })),
+                    from,
+                    to,
+                    bucket,
+                    ['totalTokens', 'spentTokens', 'savedTokens'],
+                  ),
+                )
+                setTimelineLabels(SAVINGS_SERIES.map((series) => ({ ...series })))
+              } else {
+                setTimelineRows(
+                  fillTimelineGaps(
+                    points.map((point) => ({
+                      sortKey: point.bucketStartMilliseconds,
+                      label: formatBucketLabel(point.bucketStartMilliseconds, bucket),
+                      inputTokens: point.inputTokens,
+                      outputTokens: point.outputTokens,
+                      cacheReadTokens: point.cacheReadTokens,
+                      cacheCreationTokens: point.cacheCreationTokens,
+                    })),
+                    from,
+                    to,
+                    bucket,
+                  ),
+                )
+                setTimelineLabels(TOTAL_SERIES.map((series) => ({ ...series })))
+              }
             })
         : api
             .groupedTimeline(bucket, keyParameter, from, to, sliceMode)
@@ -348,6 +373,7 @@ export default function DashboardPage({ refreshTick }: { refreshTick: number }) 
           {(
             [
               ['total', 'Общее'],
+              ['savings', 'Экономия'],
               ['model', 'По моделям'],
               ['provider', 'По провайдерам'],
             ] as [SliceMode, string][]

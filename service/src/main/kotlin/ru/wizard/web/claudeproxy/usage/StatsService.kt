@@ -63,6 +63,8 @@ interface StatsService {
         val outputTokens: Long,
         val cacheCreationTokens: Long,
         val cacheReadTokens: Long,
+        /** Оценка сэкономленных токенов (обрезка оптимизатора, ответы из кэша запросов). */
+        val savedTokens: Long = 0,
     )
 
     /**

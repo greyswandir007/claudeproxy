@@ -38,6 +38,13 @@ const TOTAL_SERIES = [
   { key: 'cacheCreationTokens', label: 'Кэш-запись', color: '#c98500' },
 ] as const
 
+// Серии среза «Экономия»: потрачено/сэкономлено/всего.
+const SAVINGS_SERIES = [
+  { key: 'totalTokens', label: 'Всего (потрачено + сэкономлено)', color: '#3987e5' },
+  { key: 'spentTokens', label: 'Потрачено', color: '#d95926' },
+  { key: 'savedTokens', label: 'Сэкономлено', color: '#199e70' },
+] as const
+
 const GRIDLINE = '#2c2c2a'
 const MUTED_INK = '#898781'
 
@@ -379,4 +386,4 @@ export function pivotGroupedTimeline(
   return { data, labels: series }
 }
 
-export { TOTAL_SERIES }
+export { TOTAL_SERIES, SAVINGS_SERIES }

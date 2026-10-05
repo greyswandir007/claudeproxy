@@ -250,7 +250,8 @@ class JdbcStatsService(
                 """SELECT (ts / $bucketMilliseconds) * $bucketMilliseconds,
                           COUNT(*),
                           COALESCE(SUM(input_tokens), 0), COALESCE(SUM(output_tokens), 0),
-                          COALESCE(SUM(cache_creation_tokens), 0), COALESCE(SUM(cache_read_tokens), 0)
+                          COALESCE(SUM(cache_creation_tokens), 0), COALESCE(SUM(cache_read_tokens), 0),
+                          COALESCE(SUM(saved_tokens), 0)
                    FROM usage_event
                    WHERE ts >= ? AND ts <= ?$keyCondition
                    GROUP BY 1
@@ -263,6 +264,7 @@ class JdbcStatsService(
                         outputTokens = resultSet.getLong(4),
                         cacheCreationTokens = resultSet.getLong(5),
                         cacheReadTokens = resultSet.getLong(6),
+                        savedTokens = resultSet.getLong(7),
                     )
                 },
                 *queryArguments(from, to, clientKey),
