@@ -40,8 +40,9 @@ cd web && npm install && npm run dev   # Vite dev server proxies /api
   pull requests may target a release stream — fix `main` first when it is
   affected, then cherry-pick the fix to the stream.
 - Patch versions `vX.Y.Z` are tagged on the corresponding release stream.
-- CI checks must pass before merging; history is kept linear (rebase or
-  squash merges).
+- CI checks must pass before merging, and an approving review is required.
+- Squash is the only merge method: one commit per pull request keeps the
+  history linear and readable.
 
 ## Reporting issues
 
