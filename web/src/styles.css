@@ -48,6 +48,15 @@ body {
   letter-spacing: 0.02em;
 }
 
+/* Подъэкраны первого экрана Дашборда: вторая строка вкладок под селектором ключа. */
+.sub-tabs {
+  display: flex;
+  gap: 14px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 18px;
+  flex-wrap: wrap;
+}
+
 .app-tabs {
   display: flex;
   gap: 4px;

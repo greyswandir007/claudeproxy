@@ -36,6 +36,16 @@ type SliceMode = 'total' | 'model' | 'provider'
 
 const DAY = 86_400_000
 
+/** Подъэкраны первого экрана Дашборда: один перегруженный экран разбит на четыре смысловых. */
+const DASHBOARD_SECTIONS = [
+  { id: 'overview', title: 'Обзор' },
+  { id: 'analytics', title: 'Аналитика' },
+  { id: 'providers', title: 'Провайдеры' },
+  { id: 'optimization', title: 'Оптимизация' },
+] as const
+
+type DashboardSection = (typeof DASHBOARD_SECTIONS)[number]['id']
+
 export default function DashboardPage({ refreshTick }: { refreshTick: number }) {
   const [clientKeys, setClientKeys] = useState<ClientKey[]>([])
   const [selectedKey, setSelectedKey] = useState<string | null>(null)
@@ -70,6 +80,7 @@ export default function DashboardPage({ refreshTick }: { refreshTick: number }) 
     toMilliseconds: Date.now(),
   }))
   const [sliceMode, setSliceMode] = useState<SliceMode>('total')
+  const [dashboardSection, setDashboardSection] = useState<DashboardSection>('overview')
 
   // Скользящие пресеты («сегодня», «7 дней», «30 дней») пересчитывают правую
   // границу к текущему моменту на каждом такте обновления: иначе новые корзины
@@ -288,19 +299,37 @@ export default function DashboardPage({ refreshTick }: { refreshTick: number }) 
           </select>
         </label>
       </div>
-      <WindowCard
-        clientWindow={clientWindow}
-        windowHours={windowHours}
-        windowModels={windowModels}
-        windowProviders={windowProviders}
-        providerLimits={providerLimits}
-      />
-      <div className="cards-row">
-        {summaries.map((summary) => (
-          <PeriodCard key={summary.range} summary={summary} />
+      <nav className="sub-tabs">
+        {DASHBOARD_SECTIONS.map((section) => (
+          <button
+            key={section.id}
+            type="button"
+            className={`tab${dashboardSection === section.id ? ' tab-active' : ''}`}
+            onClick={() => setDashboardSection(section.id)}
+          >
+            {section.title}
+          </button>
         ))}
-      </div>
-      <PeriodNavigator
+      </nav>
+      {dashboardSection === 'overview' && (
+        <>
+          <WindowCard
+            clientWindow={clientWindow}
+            windowHours={windowHours}
+            windowModels={windowModels}
+            windowProviders={windowProviders}
+            providerLimits={providerLimits}
+          />
+          <div className="cards-row">
+            {summaries.map((summary) => (
+              <PeriodCard key={summary.range} summary={summary} />
+            ))}
+          </div>
+        </>
+      )}
+      {dashboardSection === 'analytics' && (
+        <>
+        <PeriodNavigator
         selectedPreset={selectedPreset}
         onSelectPreset={(presetId, range) => {
           setSelectedPreset(presetId)
@@ -383,25 +412,37 @@ export default function DashboardPage({ refreshTick }: { refreshTick: number }) 
           labelTitle="Провайдер"
         />
       </div>
-      <RoutingHealth report={fallbackReport} cooldowns={routeCooldowns} />
-      <RequestCacheCard stats={requestCacheStats} />
-      <OptimizerCard refreshTick={refreshTick} />
-      <CostSection providerCosts={providerCosts} />
-      {providerLimits.length > 0 && (
-        <section className="card dashboard-limits">
-          <h2>
-            Лимиты провайдеров
-            <span className="card-note">информационные; графики моделей — относительно лимита</span>
-          </h2>
-          {providerLimits.map((limitUsage) => (
-            <div key={limitUsage.providerName} className="dashboard-limit-provider">
-              <h3>{limitUsage.providerName}</h3>
-              <ProviderLimitBars key={limitUsage.providerName} usage={limitUsage} />
-            </div>
-          ))}
-        </section>
+        </>
       )}
-      {keyParameter && <WindowHistoryTable windows={windows} providerWindows={providerWindows} />}
+      {dashboardSection === 'providers' && (
+        <>
+          <RoutingHealth report={fallbackReport} cooldowns={routeCooldowns} />
+          <CostSection providerCosts={providerCosts} />
+          {providerLimits.length > 0 && (
+            <section className="card dashboard-limits">
+              <h2>
+                Лимиты провайдеров
+                <span className="card-note">информационные; графики моделей — относительно лимита</span>
+              </h2>
+              {providerLimits.map((limitUsage) => (
+                <div key={limitUsage.providerName} className="dashboard-limit-provider">
+                  <h3>{limitUsage.providerName}</h3>
+                  <ProviderLimitBars key={limitUsage.providerName} usage={limitUsage} />
+                </div>
+              ))}
+            </section>
+          )}
+        </>
+      )}
+      {dashboardSection === 'optimization' && (
+        <>
+          <RequestCacheCard stats={requestCacheStats} />
+          <OptimizerCard refreshTick={refreshTick} />
+        </>
+      )}
+      {dashboardSection === 'analytics' && keyParameter && (
+        <WindowHistoryTable windows={windows} providerWindows={providerWindows} />
+      )}
     </div>
   )
 }
