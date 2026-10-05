@@ -29,6 +29,20 @@ cd web && npm install && npm run dev   # Vite dev server proxies /api
    Russian code comments, ASCII-only log messages.
 4. Keep the dashboard UI text in Russian for now.
 
+## Branching model
+
+- `main` is the development line. Direct pushes are blocked: changes land
+  through pull requests from `feature/<name>` (new functionality) or
+  `bugfix/<name>` (fixes). The source-branch policy is enforced by the
+  `Source branch policy` CI check.
+- `release/<major.minor>` are long-lived stable streams cut from `main` by
+  the maintainer; `vX.Y.0` is tagged on the stream. Only `bugfix/<name>`
+  pull requests may target a release stream — fix `main` first when it is
+  affected, then cherry-pick the fix to the stream.
+- Patch versions `vX.Y.Z` are tagged on the corresponding release stream.
+- CI checks must pass before merging; history is kept linear (rebase or
+  squash merges).
+
 ## Reporting issues
 
 Include the claudeproxy version, a minimal reproduction, and relevant
