@@ -90,6 +90,31 @@ claudeproxy:
 кеширования и т.д. — полный каталог SET-1…SET-16 с описаниями) живут
 в оверрайдах провайдера и в UI видны как раскрывающийся список.
 
+## Внешние кэш-провайдеры
+
+Клиент внешних кэш-сервисов (протокол `docs/cache-providers.md`): прокси
+не знает устройства кэша, здесь только операционные ручки обращений.
+Сами провайдеры (имя, URL) заводятся на дашборде, вкладка «Кэш».
+
+```yaml
+claudeproxy:
+  cache-providers:
+    availability-backoff-milliseconds: 30000
+    timeouts:
+      connect-timeout-milliseconds: 2000
+      consult-timeout-milliseconds: 1000
+      operation-timeout-milliseconds: 3000
+```
+
+- `consult-timeout-milliseconds` — консультация (lookup) на горячем пути
+  запроса; превышение не роняет запрос, он уходит провайдеру модели.
+- `operation-timeout-milliseconds` — запись ответа и обратная связь
+  (store/feedback), идут мимо горячего пути.
+- `availability-backoff-milliseconds` — база backoff трекера доступности:
+  после первого отказа провайдер считается недоступным столько,
+  удваиваясь с каждым сбоем до потолка 5 минут. На отключение и
+  восстановление — по одному событию (категория `cache-provider`).
+
 ## Таймауты исходящих соединений
 
 ```yaml

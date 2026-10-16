@@ -147,6 +147,7 @@ class ProvidersController(
             oauthScopes = node.path("oauthScopes").takeIf { it.isTextual }?.asText(),
             oauthRefreshToken = node.path("oauthRefreshToken").takeIf { it.isTextual && it.asText().isNotEmpty() }?.asText(),
             pricingMode = node.path("pricingMode").takeIf { it.isTextual }?.asText(),
+            limitsWipeConfirmed = node.path("limitsWipeConfirmed").asBoolean(false),
             pricePerMillionTokens = node.path("pricePerMillionTokens")
                 .takeIf { it.isNumber && it.asDouble() > 0 }?.asDouble(),
             priceMonthly = node.path("priceMonthly")

@@ -44,8 +44,8 @@ class AsyncUsageRecorder(
                            (ts, client_key, provider, model, upstream_model, stream,
                             input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens,
                             duration_ms, status, error, saved_tokens, error_detail,
-                            ttft_milliseconds, upstream_duration_milliseconds)
-                           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                            ttft_milliseconds, upstream_duration_milliseconds, user_id)
+                           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                         usageEvent.ts,
                         usageEvent.clientKey,
                         usageEvent.provider,
@@ -63,6 +63,7 @@ class AsyncUsageRecorder(
                         usageEvent.errorDetail,
                         usageEvent.ttftMilliseconds,
                         usageEvent.upstreamDurationMilliseconds,
+                        usageEvent.userId,
                     )
                 }
             } catch (exception: Exception) {

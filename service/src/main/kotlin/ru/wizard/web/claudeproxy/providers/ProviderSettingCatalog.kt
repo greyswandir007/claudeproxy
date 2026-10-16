@@ -15,6 +15,10 @@ object ProviderSettingCatalog {
     /** День месяца, с которого начинается 30-дневный платёжный период месячного лимита. */
     const val LIMIT_MONTH_START_DAY = "LIMIT_MONTH_START_DAY"
 
+    /** Кэш-провайдер этого провайдера моделей: local (умолчание) или имя
+     *  внешнего сервиса из вкладки «Кэш» (docs/cache-providers.md). */
+    const val CACHE_PROVIDER = "CACHE_PROVIDER"
+
     /** Тип значения настройки — управляет инпутом в UI и валидацией. */
     enum class ValueType { LONG, DOUBLE, EFFORT_LEVEL, BOOLEAN, NON_EMPTY_TEXT, ONE_OF }
 
@@ -36,6 +40,13 @@ object ProviderSettingCatalog {
 
     /** Все настройки каталога (порядок = порядок в UI). */
     val definitions: List<SettingDefinition> = listOf(
+        SettingDefinition(
+            key = CACHE_PROVIDER,
+            title = "Кэш-провайдер",
+            description = "local — встроенный кэш повторов; имя внешнего кэш-сервиса (вкладка «Кэш») — запросы консультируются у него, ответы пишутся ему",
+            valueType = ValueType.NON_EMPTY_TEXT,
+            placeholder = "local",
+        ),
         SettingDefinition(
             key = "API_TIMEOUT_MS",
             title = "Таймаут вызова провайдера, мс",

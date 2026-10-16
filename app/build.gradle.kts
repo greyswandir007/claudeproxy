@@ -24,6 +24,9 @@ dependencies {
 	implementation("org.jetbrains.kotlinx:kotlinx-coroutines-reactor")
 	implementation("io.github.oshai:kotlin-logging-jvm:7.0.3")
 	implementation("com.fasterxml.jackson.module:jackson-module-kotlin")
+	// Jackson 3 (tools.jackson) — на нём HTTP-кодеки Boot 4; модуль даёт
+	// data class для @RequestBody без ручного парсинга
+	implementation("tools.jackson.module:jackson-module-kotlin:3.1.1")
 	implementation("org.xerial:sqlite-jdbc:3.50.3.0")
 	implementation("net.logstash.logback:logstash-logback-encoder:8.1")
 	runtimeOnly("org.postgresql:postgresql")

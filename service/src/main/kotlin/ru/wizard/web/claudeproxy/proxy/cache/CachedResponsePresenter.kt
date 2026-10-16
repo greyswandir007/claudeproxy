@@ -58,6 +58,7 @@ object CachedResponsePresenter {
         return UsageEvent(
             ts = System.currentTimeMillis(),
             clientKey = exchange.getAttribute(ApiKeyAuthFilter.CLIENT_KEY_ATTRIBUTE) ?: "unknown",
+            userId = ru.wizard.web.claudeproxy.usage.UsageUserId.of(requestRoot),
             provider = RequestCacheService.CACHE_PROVIDER_NAME,
             model = model,
             upstreamModel = model,

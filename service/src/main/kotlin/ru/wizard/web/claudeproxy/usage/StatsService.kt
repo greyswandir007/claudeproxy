@@ -123,6 +123,10 @@ interface StatsService {
     /** Латентность (ttft / длительность провайдера / полное время) по бакетам hour|day. */
     suspend fun latencyStatistics(bucket: String, fromMilliseconds: Long?, toMilliseconds: Long?): LatencyStatistics
 
+    /** Использование по сессиям клиентов (metadata.user_id) в диапазоне —
+     *  статистика «токены/время на задачу» для трекера задач. */
+    suspend fun bySession(fromMilliseconds: Long, toMilliseconds: Long): List<SessionUsage>
+
     /** Точка срез-таймлайна: токены сущности (модель/провайдер) в бакете. */
     data class GroupedTimelinePoint(
         val bucketStartMilliseconds: Long,
@@ -252,4 +256,22 @@ interface StatsService {
 
     /** Провайдеры с тарификацией (цены заданы) + их расход за 7/30 дней. */
     suspend fun providerCosts(): List<ProviderCost>
+
+    /** Использование одной сессии клиента (metadata.user_id): трекер
+     *  задач закрывает задачу её сессией — токены, время, экономия. */
+    data class SessionUsage(
+        val userId: String,
+        val firstTsMilliseconds: Long,
+        val lastTsMilliseconds: Long,
+        val requests: Long,
+        val inputTokens: Long,
+        val outputTokens: Long,
+        val cacheCreationTokens: Long,
+        val cacheReadTokens: Long,
+        val spentTokens: Long,
+        val savedTokens: Long,
+        val savedByRequestCache: Long,
+        val savedByTrimming: Long,
+        val durationMilliseconds: Long,
+    )
 }

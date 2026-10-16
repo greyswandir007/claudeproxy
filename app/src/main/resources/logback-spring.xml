@@ -1,31 +1,48 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  Конфигурация логирования. Профиль Spring "json" включает структурные
-  JSON-логи (Logstash-энкодер) — для серверного окружения и сбора логов:
-  SPRING_PROFILES_ACTIVE=json или аргумент запуска spring.profiles.active=json.
-  Без профиля — обычный человекочитаемый консольный вывод.
+  Правило файловых JSON-логов (2026-10-15): только файл, консоль выключена.
+  Файл logs/claudeproxy-<yyyyMMdd>-<HHmmss>.txt — имя задаётся в main()
+  (время старта приложения), каждая строка — JSON в UTF-8, спецсимволы
+  экранированы энкодером. Поля: time, logger, level, message, thread,
+  stackTrace (опц.), exception (класс), pid, app; requestId — из MDC.
+  LoggingEventCompositeJsonEncoder + явный набор провайдеров: без
+  @version/level_value/tags (LogstashEncoder их навязывает).
 -->
 <configuration>
-    <springProfile name="json">
-        <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
-            <encoder class="net.logstash.logback.encoder.LogstashEncoder">
-                <customFields>{"service":"claudeproxy"}</customFields>
-                <timeZone>UTC</timeZone>
-            </encoder>
-        </appender>
-        <root level="INFO">
-            <appender-ref ref="CONSOLE"/>
-        </root>
-    </springProfile>
+    <appender name="FILE" class="ch.qos.logback.core.FileAppender">
+        <file>logs/${LOG_FILE_BASE:-claudeproxy}.txt</file>
+        <append>true</append>
+        <immediateFlush>true</immediateFlush>
+        <encoder class="net.logstash.logback.encoder.LoggingEventCompositeJsonEncoder">
+            <encoding>UTF-8</encoding>
+            <providers>
+                <timestamp>
+                    <fieldName>time</fieldName>
+                    <pattern>yyyy-MM-dd'T'HH:mm:ss.SSSXXX</pattern>
+                </timestamp>
+                <message/>
+                <loggerName>
+                    <fieldName>logger</fieldName>
+                </loggerName>
+                <threadName>
+                    <fieldName>thread</fieldName>
+                </threadName>
+                <logLevel/>
+                <stackTrace>
+                    <fieldName>stackTrace</fieldName>
+                </stackTrace>
+                <mdc/>
+                <provider class="ru.wizard.web.claudeproxy.config.logging.ExceptionClassNameProvider">
+                    <fieldName>exception</fieldName>
+                </provider>
+                <provider class="net.logstash.logback.composite.GlobalCustomFieldsJsonProvider">
+                    <customFields>{"app":"claudeproxy","pid":"${PID:-0}"}</customFields>
+                </provider>
+            </providers>
+        </encoder>
+    </appender>
 
-    <springProfile name="!json">
-        <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
-            <encoder>
-                <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} %5level [%thread] %logger{40} - %msg%n</pattern>
-            </encoder>
-        </appender>
-        <root level="INFO">
-            <appender-ref ref="CONSOLE"/>
-        </root>
-    </springProfile>
+    <root level="INFO">
+        <appender-ref ref="FILE"/>
+    </root>
 </configuration>

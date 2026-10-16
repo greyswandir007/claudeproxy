@@ -94,7 +94,8 @@ interface ProviderModelService {
         /** Видимость в GET /v1/models. */
         val exposed: Boolean?,
         /** Информационные лимиты токенов (null = не задан); при обновлении
-         *  перезаписываются все три — UI присылает явные значения. */
+         *  перезаписываются все три — UI присылает явные значения.
+         *  Обнуление заполненных значений требует [limitsWipeConfirmed]. */
         val limitWindowTokens: Long?,
         val limitWeekTokens: Long?,
         val limitMonthTokens: Long?,
@@ -118,6 +119,9 @@ interface ProviderModelService {
         val oauthRefreshToken: String?,
         /** Тарификация: '' | per_million | monthly; цены XOR — ровно одна. */
         val pricingMode: String? = null,
+        /** Явное подтверждение стирания лимитов/тарифа (инциденты 14.10:
+         *  устаревший бандл формы молча слал null). */
+        val limitsWipeConfirmed: Boolean = false,
         /** $ за 1М токенов (per_million). */
         val pricePerMillionTokens: Double? = null,
         /** $ за месяц подписки (monthly). */
