@@ -1,0 +1,7 @@
+# В контекст сборки образа попадает только boot-jar; всё остальное исключено.
+*
+!build
+build/*
+!build/libs
+build/libs/*
+!build/libs/claudeproxy-0.0.1-SNAPSHOT.jar

@@ -1,0 +1,1000 @@
+package ru.wizard.web.claudeproxy.usage.impl
+
+import org.springframework.http.HttpStatus
+import org.springframework.jdbc.core.JdbcTemplate
+import org.springframework.stereotype.Service
+import ru.wizard.web.claudeproxy.db.DatabaseProvider
+import ru.wizard.web.claudeproxy.proxy.ApiError
+import ru.wizard.web.claudeproxy.proxy.cache.RequestCacheService
+import ru.wizard.web.claudeproxy.providers.ProviderSettingCatalog
+import ru.wizard.web.claudeproxy.usage.ProviderLimitWindowCalculator
+import ru.wizard.web.claudeproxy.usage.StatsService
+import java.sql.ResultSet
+import java.time.LocalDate
+import java.time.ZoneId
+
+/**
+ * Реализация StatsService на JdbcTemplate: агрегаты считаются SQL по индексам.
+ */
+@Service
+class JdbcStatsService(
+    private val databaseProvider: DatabaseProvider,
+    private val jdbcTemplate: JdbcTemplate,
+    private val windowService: ru.wizard.web.claudeproxy.usage.WindowService,
+) : StatsService {
+
+    override suspend fun summary(range: String, clientKey: String?): StatsService.RangeSummary =
+        databaseProvider.execute {
+            val bounds = resolveBounds(range, clientKey)
+            StatsService.RangeSummary(
+                range = range,
+                fromMilliseconds = bounds.first,
+                toMilliseconds = bounds.second,
+                totals = totalsBetween(bounds.first, bounds.second, clientKey),
+                window = if (range == RANGE_WINDOW) activeWindow(clientKey) else null,
+            )
+        }
+
+    override suspend fun byModel(
+        range: String,
+        clientKey: String?,
+        fromMilliseconds: Long?,
+        toMilliseconds: Long?,
+    ): List<StatsService.GroupedUsage> =
+        databaseProvider.execute {
+            val bounds = customOrDefaultBounds(range, clientKey, fromMilliseconds, toMilliseconds)
+            grouped("model", bounds.first, bounds.second, clientKey)
+        }
+
+    override suspend fun byProvider(
+        range: String,
+        clientKey: String?,
+        fromMilliseconds: Long?,
+        toMilliseconds: Long?,
+    ): List<StatsService.GroupedUsage> =
+        databaseProvider.execute {
+            val bounds = customOrDefaultBounds(range, clientKey, fromMilliseconds, toMilliseconds)
+            grouped("provider", bounds.first, bounds.second, clientKey)
+        }
+
+    /** Пресет диапазона, если не задан произвольный from/to. */
+    private fun customOrDefaultBounds(
+        range: String,
+        clientKey: String?,
+        fromMilliseconds: Long?,
+        toMilliseconds: Long?,
+    ): Pair<Long, Long> =
+        if (fromMilliseconds != null && toMilliseconds != null) {
+            fromMilliseconds to toMilliseconds
+        } else {
+            resolveBounds(range, clientKey)
+        }
+
+    override suspend fun byClientKey(range: String): List<StatsService.GroupedUsage> =
+        databaseProvider.execute {
+            val bounds = resolveBounds(range, null)
+            grouped("client_key", bounds.first, bounds.second, null)
+        }
+
+    override suspend fun bySession(
+        fromMilliseconds: Long,
+        toMilliseconds: Long,
+    ): List<StatsService.SessionUsage> =
+        databaseProvider.execute {
+            jdbcTemplate.query(
+                """SELECT user_id,
+                       MIN(ts), MAX(ts), COUNT(*),
+                       COALESCE(SUM(input_tokens), 0), COALESCE(SUM(output_tokens), 0),
+                       COALESCE(SUM(cache_creation_tokens), 0), COALESCE(SUM(cache_read_tokens), 0),
+                       COALESCE(SUM(input_tokens + output_tokens + cache_creation_tokens + cache_read_tokens), 0),
+                       COALESCE(SUM(saved_tokens), 0),
+                       COALESCE(SUM(CASE WHEN provider = '${RequestCacheService.CACHE_PROVIDER_NAME}'
+                            THEN saved_tokens ELSE 0 END), 0),
+                       COALESCE(SUM(CASE WHEN provider <> '${RequestCacheService.CACHE_PROVIDER_NAME}'
+                            THEN saved_tokens ELSE 0 END), 0),
+                       COALESCE(SUM(duration_ms), 0)
+                   FROM usage_event
+                   WHERE user_id IS NOT NULL AND ts >= ? AND ts <= ?
+                   GROUP BY user_id
+                   ORDER BY MAX(ts) DESC""",
+                { resultSet, _ ->
+                    StatsService.SessionUsage(
+                        userId = resultSet.getString(1),
+                        firstTsMilliseconds = resultSet.getLong(2),
+                        lastTsMilliseconds = resultSet.getLong(3),
+                        requests = resultSet.getLong(4),
+                        inputTokens = resultSet.getLong(5),
+                        outputTokens = resultSet.getLong(6),
+                        cacheCreationTokens = resultSet.getLong(7),
+                        cacheReadTokens = resultSet.getLong(8),
+                        spentTokens = resultSet.getLong(9),
+                        savedTokens = resultSet.getLong(10),
+                        savedByRequestCache = resultSet.getLong(11),
+                        savedByTrimming = resultSet.getLong(12),
+                        durationMilliseconds = resultSet.getLong(13),
+                    )
+                },
+                fromMilliseconds,
+                toMilliseconds,
+            )
+        }
+
+    override suspend fun windowHistory(clientKey: String, limit: Int): List<StatsService.WindowSummary> =
+        databaseProvider.execute {
+            // окна ключа + перечень провайдеров, обслуживших каждое окно
+            val windowRows = ArrayList<StatsService.WindowSummary>()
+            jdbcTemplate.query(
+                """SELECT w.started_at, w.ends_at,
+                       COUNT(e.id),
+                       COALESCE(SUM(e.input_tokens), 0), COALESCE(SUM(e.output_tokens), 0),
+                       COALESCE(SUM(e.cache_creation_tokens), 0), COALESCE(SUM(e.cache_read_tokens), 0)
+                   FROM usage_window w
+                   LEFT JOIN usage_event e
+                     ON e.client_key = w.client_key AND e.ts >= w.started_at AND e.ts < w.ends_at
+                   WHERE w.client_key = ?
+                   GROUP BY w.started_at, w.ends_at
+                   ORDER BY w.started_at DESC
+                   LIMIT ?""",
+                { resultSet, _ ->
+                    windowRows.add(
+                        StatsService.WindowSummary(
+                            startedAtMilliseconds = resultSet.getLong(1),
+                            endsAtMilliseconds = resultSet.getLong(2),
+                            totals = StatsService.UsageTotals(
+                                requests = resultSet.getLong(3),
+                                inputTokens = resultSet.getLong(4),
+                                outputTokens = resultSet.getLong(5),
+                                cacheCreationTokens = resultSet.getLong(6),
+                                cacheReadTokens = resultSet.getLong(7),
+                            ),
+                        ),
+                    )
+                },
+                clientKey,
+                limit,
+            )
+            val providersByWindowStart = HashMap<Long, MutableSet<String>>()
+            jdbcTemplate.query(
+                """SELECT w.started_at, e.provider FROM usage_window w
+                   JOIN usage_event e
+                     ON e.client_key = w.client_key AND e.ts >= w.started_at AND e.ts < w.ends_at
+                   WHERE w.client_key = ?
+                   GROUP BY w.started_at, e.provider""",
+                { resultSet ->
+                    providersByWindowStart
+                        .getOrPut(resultSet.getLong(1)) { LinkedHashSet() }
+                        .add(resultSet.getString(2))
+                },
+                clientKey,
+            )
+            windowRows.map { window ->
+                window.copy(
+                    providers = providersByWindowStart[window.startedAtMilliseconds]?.toList() ?: emptyList(),
+                    costUsd = windowCost(
+                        window.startedAtMilliseconds,
+                        window.endsAtMilliseconds,
+                        clientKey,
+                        perMillionByProviderName(),
+                    ),
+                )
+            }
+        }
+
+    /** Стоимость токенов окна ключа: Σ (токены провайдера в окне × цена $/1М). */
+    private fun windowCost(
+        startedAtMilliseconds: Long,
+        endsAtMilliseconds: Long,
+        clientKey: String,
+        perMillionByProvider: Map<String, Double>,
+    ): Double? {
+        if (perMillionByProvider.isEmpty()) return null
+        val tokensByProvider = HashMap<String, Long>()
+        jdbcTemplate.query(
+            """SELECT provider,
+                      COALESCE(SUM(input_tokens + output_tokens + cache_creation_tokens + cache_read_tokens), 0)
+               FROM usage_event
+               WHERE client_key = ? AND ts >= ? AND ts < ?
+               GROUP BY provider""",
+            { resultSet ->
+                tokensByProvider[resultSet.getString(1)] = resultSet.getLong(2)
+            },
+            clientKey,
+            startedAtMilliseconds,
+            endsAtMilliseconds,
+        )
+        var costUsd = 0.0
+        tokensByProvider.forEach { (providerName, tokens) ->
+            perMillionByProvider[providerName]?.let { perMillion ->
+                costUsd += tokens / 1_000_000.0 * perMillion
+            }
+        }
+        return costUsd
+    }
+
+    /** Эффективная цена $/1М по провайдерам (заданная или выводимая из лимитов). */
+    private fun perMillionByProviderName(): Map<String, Double> {
+        val result = HashMap<String, Double>()
+        jdbcTemplate.query(
+            """SELECT name, pricing_mode, price_per_million_tokens, price_monthly,
+                      limit_month_tokens, limit_week_tokens, limit_window_tokens
+               FROM provider WHERE pricing_mode <> ''""",
+        ) { resultSet ->
+            val perMillion = resultSet.getDouble(3).takeIf { !resultSet.wasNull() }
+            val monthly = resultSet.getDouble(4).takeIf { !resultSet.wasNull() }
+            val monthLimit = resultSet.getLong(5).takeIf { !resultSet.wasNull() }
+                ?: resultSet.getLong(6).takeIf { !resultSet.wasNull() }
+                    ?.let { Math.round(it * WEEKS_PER_MONTH) }
+                ?: resultSet.getLong(7).takeIf { !resultSet.wasNull() }
+                    ?.let { it * WINDOWS_PER_MONTH }
+            val effective = when {
+                perMillion != null -> perMillion
+                monthly != null && monthLimit != null && monthLimit > 0 ->
+                    monthly / (monthLimit / 1_000_000)
+
+                else -> null
+            }
+            effective?.let { result[resultSet.getString(1)] = it }
+        }
+        return result
+    }
+
+    override suspend fun providerWindowHistory(limit: Int): List<StatsService.ProviderWindowSummary> =
+        databaseProvider.execute {
+            jdbcTemplate.query(
+                """SELECT w.provider_name, w.started_at, w.ends_at,
+                       COUNT(e.id),
+                       COALESCE(SUM(e.input_tokens), 0), COALESCE(SUM(e.output_tokens), 0),
+                       COALESCE(SUM(e.cache_creation_tokens), 0), COALESCE(SUM(e.cache_read_tokens), 0)
+                   FROM provider_usage_window w
+                   LEFT JOIN usage_event e
+                     ON e.provider = w.provider_name AND e.ts >= w.started_at AND e.ts < w.ends_at
+                   GROUP BY w.provider_name, w.started_at, w.ends_at
+                   ORDER BY MAX(e.ts) DESC, w.started_at DESC, w.provider_name ASC
+                   LIMIT ?""",
+                { resultSet, _ ->
+                    StatsService.ProviderWindowSummary(
+                        providerName = resultSet.getString(1),
+                        startedAtMilliseconds = resultSet.getLong(2),
+                        endsAtMilliseconds = resultSet.getLong(3),
+                        totals = StatsService.UsageTotals(
+                            requests = resultSet.getLong(4),
+                            inputTokens = resultSet.getLong(5),
+                            outputTokens = resultSet.getLong(6),
+                            cacheCreationTokens = resultSet.getLong(7),
+                            cacheReadTokens = resultSet.getLong(8),
+                        ),
+                    )
+                },
+                limit,
+            )
+        }
+
+    override suspend fun timeline(
+        bucket: String,
+        fromMilliseconds: Long?,
+        toMilliseconds: Long?,
+        clientKey: String?,
+    ): List<StatsService.TimelinePoint> =
+        databaseProvider.execute {
+            val bucketMilliseconds = when (bucket) {
+                "hour" -> 3_600_000L
+                "day" -> 86_400_000L
+                else -> throw ApiError(
+                    HttpStatus.BAD_REQUEST,
+                    "invalid_request_error",
+                    "bucket: ожидается hour или day",
+                )
+            }
+            val to = toMilliseconds ?: System.currentTimeMillis()
+            val defaultBucketCount = if (bucket == "hour") 7 * 24 else 30
+            val from = fromMilliseconds ?: to - defaultBucketCount * bucketMilliseconds
+            val keyCondition = if (clientKey != null) " AND client_key = ?" else ""
+            // строки 'graph' — ответы графовой базы (движок выпилен): токены
+            // цепочки, а не потраченные токены провайдера — из сумм расхода
+            // исключаем, чтобы историческая статистика не раздувалась
+            // (поведение для 'cache' не трогаем: там историческая семантика)
+            jdbcTemplate.query(
+                """SELECT (ts / $bucketMilliseconds) * $bucketMilliseconds,
+                          COUNT(*),
+                          COALESCE(SUM(CASE WHEN provider <> 'graph'
+                               THEN input_tokens ELSE 0 END), 0),
+                          COALESCE(SUM(CASE WHEN provider <> 'graph'
+                               THEN output_tokens ELSE 0 END), 0),
+                          COALESCE(SUM(cache_creation_tokens), 0),
+                          COALESCE(SUM(cache_read_tokens), 0),
+                          COALESCE(SUM(saved_tokens), 0)
+                   FROM usage_event
+                   WHERE ts >= ? AND ts <= ?$keyCondition
+                   GROUP BY 1
+                   ORDER BY 1""",
+                { resultSet, _ ->
+                    StatsService.TimelinePoint(
+                        bucketStartMilliseconds = resultSet.getLong(1),
+                        requests = resultSet.getLong(2),
+                        inputTokens = resultSet.getLong(3),
+                        outputTokens = resultSet.getLong(4),
+                        cacheCreationTokens = resultSet.getLong(5),
+                        cacheReadTokens = resultSet.getLong(6),
+                        savedTokens = resultSet.getLong(7),
+                    )
+                },
+                *queryArguments(from, to, clientKey),
+            )
+        }
+
+    /** Строка латентности одного события (метрики провайдера могут быть null). */
+    private data class LatencyRow(
+        val bucketStartMilliseconds: Long,
+        val timeToFirstChunkMilliseconds: Long?,
+        val upstreamDurationMilliseconds: Long?,
+        val durationMilliseconds: Long?,
+    )
+
+    override suspend fun latencyStatistics(
+        bucket: String,
+        fromMilliseconds: Long?,
+        toMilliseconds: Long?,
+    ): StatsService.LatencyStatistics =
+        databaseProvider.execute {
+            val bucketMilliseconds = when (bucket) {
+                "hour" -> 3_600_000L
+                "day" -> 86_400_000L
+                else -> throw ApiError(
+                    HttpStatus.BAD_REQUEST,
+                    "invalid_request_error",
+                    "bucket: ожидается hour или day",
+                )
+            }
+            val to = toMilliseconds ?: System.currentTimeMillis()
+            val defaultBucketCount = if (bucket == "hour") 7 * 24 else 30
+            val from = fromMilliseconds ?: to - defaultBucketCount * bucketMilliseconds
+            // только завершённые 2xx-попытки: в ошибочных латентность не показательна
+            val rows = jdbcTemplate.query(
+                """SELECT (ts / $bucketMilliseconds) * $bucketMilliseconds,
+                          ttft_milliseconds, upstream_duration_milliseconds, duration_ms
+                   FROM usage_event
+                   WHERE ts >= ? AND ts <= ? AND status BETWEEN 200 AND 299""",
+                { resultSet, _ ->
+                    LatencyRow(
+                        bucketStartMilliseconds = resultSet.getLong(1),
+                        timeToFirstChunkMilliseconds = nullableLong(resultSet, 2),
+                        upstreamDurationMilliseconds = nullableLong(resultSet, 3),
+                        durationMilliseconds = nullableLong(resultSet, 4),
+                    )
+                },
+                from,
+                to,
+            )
+            val groupedRows = rows.groupBy { it.bucketStartMilliseconds }.toSortedMap()
+            val points = groupedRows.map { (bucketStartMilliseconds, bucketRows) ->
+                StatsService.LatencyPoint(
+                    bucketStartMilliseconds = bucketStartMilliseconds,
+                    ttftMeanMilliseconds = bucketRows.mapNotNull { it.timeToFirstChunkMilliseconds }.averageOrNull(),
+                    ttftPercentile95Milliseconds = percentileOf(bucketRows.mapNotNull { it.timeToFirstChunkMilliseconds }, 0.95),
+                    upstreamMeanMilliseconds = bucketRows.mapNotNull { it.upstreamDurationMilliseconds }.averageOrNull(),
+                    upstreamPercentile95Milliseconds = percentileOf(bucketRows.mapNotNull { it.upstreamDurationMilliseconds }, 0.95),
+                    durationMeanMilliseconds = bucketRows.mapNotNull { it.durationMilliseconds }.averageOrNull(),
+                    durationPercentile95Milliseconds = percentileOf(bucketRows.mapNotNull { it.durationMilliseconds }, 0.95),
+                    requests = bucketRows.size.toLong(),
+                )
+            }
+            StatsService.LatencyStatistics(
+                points = points,
+                ttftMeanMilliseconds = rows.mapNotNull { it.timeToFirstChunkMilliseconds }.averageOrNull(),
+                ttftPercentile95Milliseconds = percentileOf(rows.mapNotNull { it.timeToFirstChunkMilliseconds }, 0.95),
+                upstreamMeanMilliseconds = rows.mapNotNull { it.upstreamDurationMilliseconds }.averageOrNull(),
+                upstreamPercentile95Milliseconds = percentileOf(rows.mapNotNull { it.upstreamDurationMilliseconds }, 0.95),
+                durationMeanMilliseconds = rows.mapNotNull { it.durationMilliseconds }.averageOrNull(),
+                durationPercentile95Milliseconds = percentileOf(rows.mapNotNull { it.durationMilliseconds }, 0.95),
+                requests = rows.size.toLong(),
+            )
+        }
+
+    /** Long по индексу колонки с учётом NULL. */
+    private fun nullableLong(resultSet: ResultSet, columnIndex: Int): Long? {
+        val value = resultSet.getLong(columnIndex)
+        return if (resultSet.wasNull()) null else value
+    }
+
+    /** p95-подобный перцентиль: percentile существующего helper'а + null для пустого списка. */
+    private fun percentileOf(values: List<Long>, fraction: Double): Double? =
+        if (values.isEmpty()) null else percentile(values.sorted(), fraction).toDouble()
+
+    /** Среднее списка или null, если он пуст. */
+    private fun List<Long>.averageOrNull(): Double? = if (isEmpty()) null else average()
+
+    /** Эффективный лимит категории: задан или выведен из другой (приоритет месяц → неделя → окно). */
+    private data class EffectiveLimit(val tokens: Long, val derived: Boolean)
+
+    private fun windowLimitOf(row: ProviderLimitsRow): EffectiveLimit? = when {
+        row.window != null -> EffectiveLimit(row.window, derived = false)
+        row.month != null -> EffectiveLimit(Math.round(row.month / WINDOWS_PER_MONTH.toDouble()), derived = true)
+        row.week != null -> EffectiveLimit(Math.round(row.week / WINDOWS_PER_WEEK.toDouble()), derived = true)
+        else -> null
+    }
+
+    private fun weekLimitOf(row: ProviderLimitsRow): EffectiveLimit? = when {
+        row.week != null -> EffectiveLimit(row.week, derived = false)
+        row.month != null -> EffectiveLimit(Math.round(row.month / WEEKS_PER_MONTH.toDouble()), derived = true)
+        row.window != null -> EffectiveLimit(Math.round(row.window * WINDOWS_PER_WEEK.toDouble()), derived = true)
+        else -> null
+    }
+
+    private fun monthLimitOf(row: ProviderLimitsRow): EffectiveLimit? = when {
+        row.month != null -> EffectiveLimit(row.month, derived = false)
+        row.week != null -> EffectiveLimit(Math.round(row.week * WEEKS_PER_MONTH.toDouble()), derived = true)
+        row.window != null -> EffectiveLimit(row.window * WINDOWS_PER_MONTH, derived = true)
+        else -> null
+    }
+
+    override suspend fun groupedTimeline(
+        bucket: String,
+        fromMilliseconds: Long?,
+        toMilliseconds: Long?,
+        clientKey: String?,
+        groupBy: String,
+    ): List<StatsService.GroupedTimelinePoint> =
+        databaseProvider.execute {
+            val bucketMilliseconds = when (bucket) {
+                "hour" -> 3_600_000L
+                "day" -> 86_400_000L
+                else -> throw ApiError(
+                    HttpStatus.BAD_REQUEST,
+                    "invalid_request_error",
+                    "bucket: ожидается hour или day",
+                )
+            }
+            val column = when (groupBy) {
+                "model" -> "model"
+                "provider" -> "provider"
+                else -> throw ApiError(
+                    HttpStatus.BAD_REQUEST,
+                    "invalid_request_error",
+                    "group: ожидается model или provider",
+                )
+            }
+            val to = toMilliseconds ?: System.currentTimeMillis()
+            val defaultBucketCount = if (bucket == "hour") 7 * 24 else 30
+            val from = fromMilliseconds ?: to - defaultBucketCount * bucketMilliseconds
+            val keyCondition = if (clientKey != null) " AND client_key = ?" else ""
+            val rawPoints = ArrayList<StatsService.GroupedTimelinePoint>()
+            jdbcTemplate.query(
+                """SELECT (ts / $bucketMilliseconds) * $bucketMilliseconds, $column, COUNT(*),
+                          COALESCE(SUM(input_tokens + output_tokens + cache_creation_tokens + cache_read_tokens), 0)
+                   FROM usage_event
+                   WHERE ts >= ? AND ts <= ?$keyCondition
+                   GROUP BY 1, $column
+                   ORDER BY 1, 4 DESC""",
+                { resultSet, _ ->
+                    rawPoints.add(
+                        StatsService.GroupedTimelinePoint(
+                            bucketStartMilliseconds = resultSet.getLong(1),
+                            label = resultSet.getString(2),
+                            requests = resultSet.getLong(3),
+                            tokens = resultSet.getLong(4),
+                        ),
+                    )
+                },
+                *queryArguments(from, to, clientKey),
+            )
+            collapseToTopPerBucket(rawPoints)
+        }
+
+    /** Топ-N меток на бакет, остальное — в «прочее». */
+    private fun collapseToTopPerBucket(rawPoints: List<StatsService.GroupedTimelinePoint>): List<StatsService.GroupedTimelinePoint> {
+        val result = ArrayList<StatsService.GroupedTimelinePoint>()
+        rawPoints.groupBy { it.bucketStartMilliseconds }.toSortedMap().forEach { (bucketStart, bucketPoints) ->
+            val sorted = bucketPoints.sortedByDescending { it.tokens }
+            result.addAll(sorted.take(GROUPED_TIMELINE_TOP))
+            val otherPoints = sorted.drop(GROUPED_TIMELINE_TOP)
+            if (otherPoints.isNotEmpty()) {
+                result.add(
+                    StatsService.GroupedTimelinePoint(
+                        bucketStartMilliseconds = bucketStart,
+                        label = OTHER_LABEL,
+                        tokens = otherPoints.sumOf { it.tokens },
+                        requests = otherPoints.sumOf { it.requests },
+                    ),
+                )
+            }
+        }
+        return result
+    }
+
+    override suspend fun windowBoundaries(
+        clientKey: String,
+        fromMilliseconds: Long,
+        toMilliseconds: Long,
+    ): List<StatsService.WindowBoundary> =
+        databaseProvider.execute {
+            jdbcTemplate.query(
+                """SELECT started_at, ends_at FROM usage_window
+                   WHERE client_key = ? AND started_at <= ? AND ends_at >= ?
+                   ORDER BY started_at""",
+                { resultSet, _ ->
+                    StatsService.WindowBoundary(
+                        startedAtMilliseconds = resultSet.getLong(1),
+                        endsAtMilliseconds = resultSet.getLong(2),
+                    )
+                },
+                clientKey,
+                toMilliseconds,
+                fromMilliseconds,
+            )
+        }
+
+    override suspend fun providerWindowBoundaries(
+        fromMilliseconds: Long,
+        toMilliseconds: Long,
+    ): List<StatsService.ProviderWindowBoundary> =
+        databaseProvider.execute {
+            jdbcTemplate.query(
+                """SELECT provider_name, started_at, ends_at FROM provider_usage_window
+                   WHERE started_at <= ? AND ends_at >= ?
+                   ORDER BY provider_name, started_at""",
+                { resultSet, _ ->
+                    StatsService.ProviderWindowBoundary(
+                        providerName = resultSet.getString(1),
+                        startedAtMilliseconds = resultSet.getLong(2),
+                        endsAtMilliseconds = resultSet.getLong(3),
+                    )
+                },
+                toMilliseconds,
+                fromMilliseconds,
+            )
+        }
+
+    override suspend fun providerCosts(): List<StatsService.ProviderCost> =
+        databaseProvider.execute { providerCostsBlocking() }
+
+    private data class PricingRow(
+        val name: String,
+        val mode: String,
+        val perMillion: Double?,
+        val monthly: Double?,
+        val monthLimitTokens: Long?,
+        val weekLimitTokens: Long?,
+        val windowLimitTokens: Long?,
+    )
+
+    private fun providerCostsBlocking(): List<StatsService.ProviderCost> {
+        val pricingRows = ArrayList<PricingRow>()
+        jdbcTemplate.query(
+            """SELECT name, pricing_mode, price_per_million_tokens, price_monthly,
+                      limit_month_tokens, limit_week_tokens, limit_window_tokens
+               FROM provider WHERE pricing_mode <> '' ORDER BY created_at, id""",
+        ) { resultSet ->
+            pricingRows.add(
+                PricingRow(
+                    name = resultSet.getString(1),
+                    mode = resultSet.getString(2),
+                    perMillion = resultSet.getDouble(3).takeIf { !resultSet.wasNull() },
+                    monthly = resultSet.getDouble(4).takeIf { !resultSet.wasNull() },
+                    monthLimitTokens = resultSet.getLong(5).takeIf { !resultSet.wasNull() },
+                    weekLimitTokens = resultSet.getLong(6).takeIf { !resultSet.wasNull() },
+                    windowLimitTokens = resultSet.getLong(7).takeIf { !resultSet.wasNull() },
+                ),
+            )
+        }
+        val now = System.currentTimeMillis()
+        return pricingRows.map { pricing ->
+            // месячный лимит: явный, иначе выводим из недельного/оконного
+            // (те же коэффициенты, что у производных лимитов)
+            val monthLimit = pricing.monthLimitTokens
+                ?: pricing.weekLimitTokens?.let { Math.round(it * WEEKS_PER_MONTH) }
+                ?: pricing.windowLimitTokens?.let { it * WINDOWS_PER_MONTH }
+            var perMillion = pricing.perMillion
+            var perMillionDerived = false
+            var monthly = pricing.monthly
+            var monthlyDerived = false
+            if (monthLimit != null && monthLimit > 0) {
+                if (perMillion != null && monthly == null) {
+                    monthly = perMillion * monthLimit / 1_000_000
+                    monthlyDerived = true
+                } else if (monthly != null && perMillion == null) {
+                    perMillion = monthly / (monthLimit / 1_000_000)
+                    perMillionDerived = true
+                }
+            }
+            StatsService.ProviderCost(
+                providerName = pricing.name,
+                pricingMode = pricing.mode,
+                pricePerMillionTokens = perMillion,
+                pricePerMillionDerived = perMillionDerived,
+                priceMonthly = monthly,
+                priceMonthlyDerived = monthlyDerived,
+                spentTokens7Days = providerTokensSince(pricing.name, now - 7 * 86_400_000L),
+                spentTokens30Days = providerTokensSince(pricing.name, now - 30 * 86_400_000L),
+            )
+        }
+    }
+
+    private fun providerTokensSince(providerName: String, fromMilliseconds: Long): Long =
+        jdbcTemplate.query(
+            """SELECT COALESCE(SUM(input_tokens + output_tokens + cache_creation_tokens + cache_read_tokens), 0)
+               FROM usage_event WHERE provider = ? AND ts >= ?""",
+            { resultSet, _ -> resultSet.getLong(1) },
+            providerName,
+            fromMilliseconds,
+        ).firstOrNull() ?: 0L
+
+    override suspend fun fallbackReport(range: String, clientKey: String?): StatsService.FallbackReport =
+        databaseProvider.execute { fallbackReportBlocking(range, clientKey) }
+
+    private fun fallbackReportBlocking(range: String, clientKey: String?): StatsService.FallbackReport {
+        val bounds = resolveBounds(range, clientKey)
+        val keyCondition = if (clientKey != null) " AND client_key = ?" else ""
+        val rangeArguments = queryArguments(bounds.first, bounds.second, clientKey)
+
+        // запросы/ошибки по провайдерам
+        data class HealthRow(var requests: Long = 0, var failed: Long = 0)
+        val healthByName = HashMap<String, HealthRow>()
+        jdbcTemplate.query(
+            """SELECT provider, COUNT(*),
+                      COALESCE(SUM(CASE WHEN status >= 400 OR error IS NOT NULL THEN 1 ELSE 0 END), 0)
+               FROM usage_event
+               WHERE ts >= ? AND ts <= ?$keyCondition
+               GROUP BY provider""",
+            { resultSet ->
+                healthByName[resultSet.getString(1)] =
+                    HealthRow(resultSet.getLong(2), resultSet.getLong(3))
+            },
+            *rangeArguments,
+        )
+
+        // латентность успешных попыток по провайдерам (для перцентилей)
+        val durationsByName = HashMap<String, MutableList<Long>>()
+        jdbcTemplate.query(
+            """SELECT provider, duration_ms FROM usage_event
+               WHERE ts >= ? AND ts <= ? AND status = 200 AND duration_ms IS NOT NULL$keyCondition""",
+            { resultSet ->
+                durationsByName
+                    .getOrPut(resultSet.getString(1)) { ArrayList() }
+                    .add(resultSet.getLong(2))
+            },
+            *rangeArguments,
+        )
+
+        val providers = healthByName.map { (name, health) ->
+            val durations = (durationsByName[name] ?: emptyList()).sorted()
+            StatsService.ProviderHealth(
+                providerName = name,
+                requests = health.requests,
+                failedAttempts = health.failed,
+                p50DurationMilliseconds = percentile(durations, 0.50),
+                p95DurationMilliseconds = percentile(durations, 0.95),
+            )
+        }.sortedByDescending { it.requests }
+
+        // последние неудачные попытки (лента переключений)
+        val recentFailures = ArrayList<StatsService.FailedAttempt>()
+        jdbcTemplate.query(
+            """SELECT id, ts, model, provider, status, COALESCE(error, '') FROM usage_event
+               WHERE ts >= ? AND ts <= ? AND (status >= 400 OR error IS NOT NULL)$keyCondition
+               ORDER BY id DESC LIMIT 10""",
+            { resultSet ->
+                recentFailures.add(
+                    StatsService.FailedAttempt(
+                        id = resultSet.getLong(1),
+                        timestamp = resultSet.getLong(2),
+                        model = resultSet.getString(3),
+                        providerName = resultSet.getString(4),
+                        status = resultSet.getInt(5),
+                        error = resultSet.getString(6).take(160),
+                    ),
+                )
+            },
+            *rangeArguments,
+        )
+        return StatsService.FallbackReport(providers, recentFailures)
+    }
+
+    override suspend fun errorDetail(eventId: Long): StatsService.ErrorDetail? = databaseProvider.execute {
+        val found = ArrayList<StatsService.ErrorDetail>()
+        jdbcTemplate.query(
+            "SELECT id, error_detail FROM usage_event WHERE id = ?",
+            { resultSet ->
+                found.add(StatsService.ErrorDetail(eventId = resultSet.getLong(1), detail = resultSet.getString(2)))
+            },
+            eventId,
+        )
+        found.firstOrNull()
+    }
+
+    private fun percentile(sortedValues: List<Long>, fraction: Double): Long {
+        if (sortedValues.isEmpty()) return 0
+        val index = ((sortedValues.size - 1) * fraction).toInt()
+        return sortedValues[index]
+    }
+
+    override suspend fun providerLimitUsage(): List<StatsService.ProviderLimitUsage> =
+        databaseProvider.execute { providerLimitUsageBlocking() }
+
+    private data class ProviderLimitsRow(
+        val id: Long,
+        val name: String,
+        val window: Long?,
+        val week: Long?,
+        val month: Long?,
+    )
+
+    private fun providerLimitUsageBlocking(): List<StatsService.ProviderLimitUsage> {
+        val limitRows = ArrayList<ProviderLimitsRow>()
+        jdbcTemplate.query(
+            """SELECT id, name, limit_window_tokens, limit_week_tokens, limit_month_tokens
+               FROM provider ORDER BY created_at, id""",
+        ) { resultSet ->
+            val window = resultSet.getLong(3).takeIf { !resultSet.wasNull() }
+            val week = resultSet.getLong(4).takeIf { !resultSet.wasNull() }
+            val month = resultSet.getLong(5).takeIf { !resultSet.wasNull() }
+            if (window != null || week != null || month != null) {
+                limitRows.add(ProviderLimitsRow(resultSet.getLong(1), resultSet.getString(2), window, week, month))
+            }
+        }
+        // Настройки периодов лимитов: режим недели, день начала недели и день платёжного периода.
+        val limitPeriodSettings = HashMap<Long, MutableMap<String, String>>()
+        jdbcTemplate.query(
+            "SELECT provider_id, setting_key, setting_value FROM provider_setting",
+        ) { resultSet ->
+            val key = resultSet.getString(2)
+            if (key == ProviderSettingCatalog.LIMIT_WEEK_MODE ||
+                key == ProviderSettingCatalog.LIMIT_WEEK_START_DAY ||
+                key == ProviderSettingCatalog.LIMIT_MONTH_START_DAY
+            ) {
+                limitPeriodSettings.getOrPut(resultSet.getLong(1)) { HashMap() }[key] = resultSet.getString(3)
+            }
+        }
+        val now = System.currentTimeMillis()
+        val zone = ZoneId.systemDefault()
+        return limitRows.map { limitsRow ->
+            val periodSettings = limitPeriodSettings[limitsRow.id].orEmpty()
+            val weekMode = periodSettings[ProviderSettingCatalog.LIMIT_WEEK_MODE]
+            val weekSliding = weekMode != ProviderLimitWindowCalculator.WEEK_MODE_FIXED_DAY
+            val monthSliding = !periodSettings.containsKey(ProviderSettingCatalog.LIMIT_MONTH_START_DAY)
+            val weekBounds = ProviderLimitWindowCalculator.weekWindow(
+                weekMode,
+                periodSettings[ProviderSettingCatalog.LIMIT_WEEK_START_DAY],
+                now,
+                zone,
+            )
+            val monthBounds = ProviderLimitWindowCalculator.monthWindow(
+                periodSettings[ProviderSettingCatalog.LIMIT_MONTH_START_DAY]?.toIntOrNull(),
+                now,
+                zone,
+            )
+            val providerWindowBounds = windowService.currentProviderWindow(limitsRow.name)
+            val windowUsage = windowLimitOf(limitsRow)?.let { effectiveLimit ->
+                val from = providerWindowBounds?.startedAtMilliseconds ?: now
+                val to = providerWindowBounds?.endsAtMilliseconds ?: now
+                // истекшее окно не расходует лимит: новое начнётся с нуля,
+                // поэтому показываем 0 (выработка последнего окна не вводит в заблуждение)
+                val windowCurrentlyActive = providerWindowBounds?.active == true
+                StatsService.LimitPeriodUsage(
+                    limitTokens = effectiveLimit.tokens,
+                    spentTokens = if (windowCurrentlyActive) {
+                        totalsBetween(from, now, null, limitsRow.name).totalTokens()
+                    } else {
+                        0
+                    },
+                    fromMilliseconds = from,
+                    toMilliseconds = to,
+                    modelTokens = if (windowCurrentlyActive) {
+                        modelTokensFor(limitsRow.name, from, now)
+                    } else {
+                        emptyList()
+                    },
+                    derived = effectiveLimit.derived,
+                )
+            }
+            val weekUsage = weekLimitOf(limitsRow)?.let { effectiveLimit ->
+                StatsService.LimitPeriodUsage(
+                    limitTokens = effectiveLimit.tokens,
+                    spentTokens = totalsBetween(weekBounds.first, weekBounds.second, null, limitsRow.name).totalTokens(),
+                    fromMilliseconds = weekBounds.first,
+                    toMilliseconds = weekBounds.second,
+                    modelTokens = modelTokensFor(limitsRow.name, weekBounds.first, weekBounds.second),
+                    derived = effectiveLimit.derived,
+                    sliding = weekSliding,
+                )
+            }
+            val monthUsage = monthLimitOf(limitsRow)?.let { effectiveLimit ->
+                StatsService.LimitPeriodUsage(
+                    limitTokens = effectiveLimit.tokens,
+                    spentTokens = totalsBetween(monthBounds.first, monthBounds.second, null, limitsRow.name).totalTokens(),
+                    fromMilliseconds = monthBounds.first,
+                    toMilliseconds = monthBounds.second,
+                    modelTokens = modelTokensFor(limitsRow.name, monthBounds.first, monthBounds.second),
+                    derived = effectiveLimit.derived,
+                    sliding = monthSliding,
+                )
+            }
+            StatsService.ProviderLimitUsage(
+                providerName = limitsRow.name,
+                window = windowUsage,
+                week = weekUsage,
+                month = monthUsage,
+                windowActive = providerWindowBounds?.active ?: false,
+            )
+        }
+    }
+
+    private fun StatsService.UsageTotals.totalTokens(): Long =
+        inputTokens + outputTokens + cacheCreationTokens + cacheReadTokens
+
+    /** Токены по моделям провайдера за период (убывание; нулевые строки —
+     *  неудачные попытки fallback — не включаются). */
+    private fun modelTokensFor(providerName: String, fromMilliseconds: Long, toMilliseconds: Long): List<StatsService.ModelTokens> =
+        jdbcTemplate.query(
+            """SELECT model,
+                      COALESCE(SUM(input_tokens + output_tokens + cache_creation_tokens + cache_read_tokens), 0)
+               FROM usage_event
+               WHERE ts >= ? AND ts <= ? AND provider = ?
+               GROUP BY model
+               HAVING SUM(input_tokens + output_tokens + cache_creation_tokens + cache_read_tokens) > 0
+               ORDER BY 2 DESC""",
+            { resultSet, _ ->
+                StatsService.ModelTokens(
+                    modelName = resultSet.getString(1),
+                    tokens = resultSet.getLong(2),
+                )
+            },
+            fromMilliseconds,
+            toMilliseconds,
+            providerName,
+        )
+
+    private fun resolveBounds(range: String, clientKey: String?): Pair<Long, Long> {
+        val now = System.currentTimeMillis()
+        return when (range) {
+            RANGE_WINDOW -> {
+                if (clientKey == null) {
+                    throw ApiError(
+                        HttpStatus.BAD_REQUEST,
+                        "invalid_request_error",
+                        "range=window требует параметр key",
+                    )
+                }
+                val window = activeWindow(clientKey)
+                    ?: return now to now
+                window.startedAtMilliseconds to now
+            }
+
+            RANGE_TODAY -> {
+                val zone = ZoneId.systemDefault()
+                LocalDate.now(zone).atStartOfDay(zone).toInstant().toEpochMilli() to now
+            }
+
+            RANGE_WEEK -> {
+                val zone = ZoneId.systemDefault()
+                val today = LocalDate.now(zone)
+                val weekStart = today.minusDays(((today.dayOfWeek.value + 6) % 7).toLong())
+                weekStart.atStartOfDay(zone).toInstant().toEpochMilli() to now
+            }
+
+            RANGE_7_DAYS -> (now - 7 * 86_400_000L) to now
+            RANGE_30_DAYS -> (now - 30 * 86_400_000L) to now
+            else -> throw ApiError(
+                HttpStatus.BAD_REQUEST,
+                "invalid_request_error",
+                "range: ожидается window, today, week, 7d или 30d",
+            )
+        }
+    }
+
+    private fun activeWindow(clientKey: String?): StatsService.WindowSummary? {
+        if (clientKey == null) return null
+        val windows = jdbcTemplate.query(
+            "SELECT started_at, ends_at FROM usage_window " +
+                "WHERE client_key = ? AND ends_at > ? ORDER BY started_at DESC LIMIT 1",
+            { resultSet, _ ->
+                StatsService.WindowSummary(
+                    startedAtMilliseconds = resultSet.getLong(1),
+                    endsAtMilliseconds = resultSet.getLong(2),
+                    totals = StatsService.UsageTotals(0, 0, 0, 0, 0),
+                )
+            },
+            clientKey,
+            System.currentTimeMillis(),
+        )
+        if (windows.isEmpty()) return null
+        val window = windows.first()
+        return window.copy(
+            totals = totalsBetween(window.startedAtMilliseconds, window.endsAtMilliseconds, clientKey),
+        )
+    }
+
+    private fun totalsBetween(
+        fromMilliseconds: Long,
+        toMilliseconds: Long,
+        clientKey: String?,
+        providerName: String? = null,
+    ): StatsService.UsageTotals {
+        val conditions = buildString {
+            append("ts >= ? AND ts <= ?")
+            if (clientKey != null) append(" AND client_key = ?")
+            if (providerName != null) append(" AND provider = ?")
+        }
+        val arguments = ArrayList<Any>()
+        arguments.add(fromMilliseconds)
+        arguments.add(toMilliseconds)
+        clientKey?.let { arguments.add(it) }
+        providerName?.let { arguments.add(it) }
+        return jdbcTemplate.queryForObject(
+            """SELECT COUNT(*),
+                      COALESCE(SUM(input_tokens), 0), COALESCE(SUM(output_tokens), 0),
+                      COALESCE(SUM(cache_creation_tokens), 0), COALESCE(SUM(cache_read_tokens), 0),
+                      COALESCE(SUM(cache_read_tokens + saved_tokens), 0),
+                      COALESCE(SUM(CASE WHEN provider = '${RequestCacheService.CACHE_PROVIDER_NAME}'
+                            THEN saved_tokens ELSE 0 END), 0),
+                      COALESCE(SUM(cache_read_tokens), 0),
+                      COALESCE(SUM(CASE WHEN provider <> '${RequestCacheService.CACHE_PROVIDER_NAME}'
+                            THEN saved_tokens ELSE 0 END), 0)
+               FROM usage_event
+               WHERE $conditions""",
+            { resultSet, _ ->
+                StatsService.UsageTotals(
+                    requests = resultSet.getLong(1),
+                    inputTokens = resultSet.getLong(2),
+                    outputTokens = resultSet.getLong(3),
+                    cacheCreationTokens = resultSet.getLong(4),
+                    cacheReadTokens = resultSet.getLong(5),
+                    savedTokens = resultSet.getLong(6),
+                    savedByRequestCache = resultSet.getLong(7),
+                    savedByPromptCache = resultSet.getLong(8),
+                    savedByTrimming = resultSet.getLong(9),
+                )
+            },
+            *arguments.toTypedArray(),
+        )!!
+    }
+
+    private fun grouped(
+        column: String,
+        fromMilliseconds: Long,
+        toMilliseconds: Long,
+        clientKey: String?,
+    ): List<StatsService.GroupedUsage> {
+        val keyCondition = if (clientKey != null) " AND client_key = ?" else ""
+        return jdbcTemplate.query(
+            """SELECT $column,
+                      COUNT(*),
+                      COALESCE(SUM(input_tokens), 0), COALESCE(SUM(output_tokens), 0),
+                      COALESCE(SUM(cache_creation_tokens), 0), COALESCE(SUM(cache_read_tokens), 0)
+               FROM usage_event
+               WHERE ts >= ? AND ts <= ?$keyCondition
+               GROUP BY $column
+               ORDER BY SUM(input_tokens + output_tokens + cache_read_tokens) DESC""",
+            { resultSet, _ ->
+                StatsService.GroupedUsage(
+                    label = resultSet.getString(1),
+                    requests = resultSet.getLong(2),
+                    inputTokens = resultSet.getLong(3),
+                    outputTokens = resultSet.getLong(4),
+                    cacheCreationTokens = resultSet.getLong(5),
+                    cacheReadTokens = resultSet.getLong(6),
+                )
+            },
+            *queryArguments(fromMilliseconds, toMilliseconds, clientKey),
+        )
+    }
+
+    /** Аргументы SQL-запроса без null (для varargs JdbcTemplate). */
+    private fun queryArguments(vararg values: Any?): Array<Any> =
+        values.filterNotNull().toTypedArray()
+
+    private companion object {
+        const val RANGE_WINDOW = "window"
+        const val RANGE_TODAY = "today"
+        const val RANGE_WEEK = "week"
+        const val RANGE_7_DAYS = "7d"
+        const val RANGE_30_DAYS = "30d"
+
+        /** Окно 5ч; неделя 168ч = 33,6 окна; месяц 720ч = 144 окна ≈ 4,29 недели. */
+        const val WINDOWS_PER_WEEK = 33.6
+        const val WINDOWS_PER_MONTH = 144L
+        const val WEEKS_PER_MONTH = 4.29
+
+        const val GROUPED_TIMELINE_TOP = 7
+        const val OTHER_LABEL = "прочее"
+    }
+}

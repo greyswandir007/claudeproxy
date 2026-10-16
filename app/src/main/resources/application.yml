@@ -1,0 +1,15 @@
+spring:
+  application:
+    name: claudeproxy
+
+  # SQLite: файловая БД статистики; схема и миграции — db/migration/V*.sql
+  # (DatabaseMigrationRunner), без spring.sql.init
+  datasource:
+    url: jdbc:sqlite:data/claudeproxy.db
+    driver-class-name: org.sqlite.JDBC
+    hikari:
+      # SQLite — один писатель: пул в одно соединение
+      maximum-pool-size: 1
+
+  # Лимит чтения тел (64 МБ) настраивается НЕ здесь: spring.codec.max-in-memory-size
+  # в Boot 4 к серверным кодекам не применяется — см. WebConfiguration

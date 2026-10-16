@@ -1,0 +1,36 @@
+name: Branch rules
+
+on:
+  pull_request:
+    branches: [main, "release/**"]
+
+jobs:
+  source-branch:
+    name: Source branch policy
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check source branch name
+        env:
+          BASE_REF: ${{ github.base_ref }}
+          HEAD_REF: ${{ github.head_ref }}
+        run: |
+          case "$BASE_REF" in
+            main)
+              pattern='^(feature|bugfix)/.+'
+              hint="Use feature/<name> or bugfix/<name> branches to target main."
+              ;;
+            release/*)
+              pattern='^bugfix/.+'
+              hint="Only bugfix/<name> branches may target a release stream."
+              ;;
+            *)
+              echo "Pull requests may only target main or release/* (got: $BASE_REF)" >&2
+              exit 1
+              ;;
+          esac
+          if ! echo "$HEAD_REF" | grep -Eq "$pattern"; then
+            echo "Source branch '$HEAD_REF' does not match '$pattern' for target '$BASE_REF'." >&2
+            echo "$hint" >&2
+            exit 1
+          fi
+          echo "OK: '$HEAD_REF' -> '$BASE_REF'"

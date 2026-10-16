@@ -1,0 +1,154 @@
+# Пример конфигурации claudeproxy.
+# Скопируйте в config/application.yml и подставьте ключи через переменные окружения.
+# Реальный config/application.yml в git не попадает (.gitignore).
+
+server:
+  port: 8080
+
+claudeproxy:
+  # Длительность окна использования (часы) — по одному циклу на каждый клиентский ключ.
+  window-hours: 5
+  # Автоочистка старых событий статистики, в днях (0 = не чистить).
+  retention-days: 365
+  # Кэш повторяющихся запросов (TTL — настройка провайдера REQUEST_CACHE_TTL_MS,
+  # по умолчанию 10 минут; 0 = выключить для провайдера).
+  request-cache:
+    # Максимум строк в кэше; лишние вытесняются по LRU.
+    max-rows: 1000
+
+  # Sticky-аффинность разговоров: продолжать разговор на том же провайдере
+  # из числа равнозначных, чтобы не терять промпт-кэш вверх по течению.
+  # conversation-affinity:
+  #   enabled: true
+  #   ttl-seconds: 3600         # привязка живёт, пока с последнего хода прошло меньше
+  #   max-entries: 1000         # лимит привязок в памяти (переполнение выталкивает старые)
+
+  # Самообучение коэффициента «символы → токены» для оценки count_tokens
+  # у openai-провайдеров по фактическим input_tokens ответов.
+  # token-calibration:
+  #   enabled: true
+  #   minimum-samples: 20       # минимум накопленных запросов для применения коэффициента
+
+  # Журнал событий сервера (страница «События» дашборда).
+  # server-event:
+  #   queue-capacity: 1000      # ёмкость async-очереди записи; переполнение — события отбрасываются
+  #   retention-days: 14        # автоочистка server_event, дней (0 = не чистить)
+  #   min-level: WARN           # минимальный уровень захвата логов: INFO | WARN | ERROR
+
+  # Модель-оптимизатор (M30): сжатие старых tool_result осмысленным пересказом
+  # вместо маркера «[trimmed by claudeproxy]» (M11). Провайдер и модель
+  # выбираются на дашборде (карточка «Оптимизатор»), здесь — только технические
+  # ручки. Действует у провайдеров с настройкой TRIM_OLD_TOOL_RESULTS=true;
+  # при недоступности/таймауте модели — откат на маркер, запрос не страдает.
+  # Сжимаются только запросы протокола Anthropic (/v1/messages).
+  optimizer:
+    # Жёсткий таймаут одного запроса к модели-оптимизатору.
+    request-timeout-milliseconds: 15000
+    # Лимит max_tokens ответа модели при сжатии.
+    max-completion-tokens: 1024
+    # Контент длиннее не отправляется модели — сразу маркер, как в M11.
+    max-input-characters: 65536
+    # Сколько блоков за один запрос разрешено сжимать (бюджет латентности:
+    # первый запрос с новым контентом может ждать до budget × timeout).
+    max-compressions-per-request: 3
+    # Ёмкость LRU-кэша сжатий по SHA-256 контента (повторы не дергают модель).
+    max-cache-entries: 256
+
+  # Клиент внешних кэш-провайдеров (протокол docs/cache-providers.md):
+  # прокси не знает устройства кэша, здесь только операционные ручки —
+  # таймауты и backoff трекера доступности. Сами провайдеры (имя, URL)
+  # заводятся на дашборде, вкладка «Кэш».
+  cache-providers:
+    availability-backoff-milliseconds: 30000   # база backoff, удваивается до 5 минут
+    timeouts:
+      connect-timeout-milliseconds: 2000
+      consult-timeout-milliseconds: 1000       # lookup на горячем пути запроса
+      operation-timeout-milliseconds: 3000     # store/feedback
+
+  # Таймауты исходящих соединений к провайдерам (прямой путь и через прокси).
+  # Соединение обрывается ошибкой, если апстрим молчит дольше read-timeout-seconds
+  # (для SSE безопасно: события идут часто), клиент получает 5xx вместо вечного висения.
+  upstream:
+    connect-timeout-milliseconds: 10000
+    read-timeout-seconds: 300
+
+  # Стыковка с GraphDB (эксперимент): прокси учит граф парами «запрос → ответ»
+  # и (опционально) отвечает из графа до похода к провайдеру.
+  # ВНИМАНИЕ: в GraphDB уходит текст разговоров — держите base-url локальным.
+  # Операционные параметры редактируются из дашборда (вкладка «Граф») и
+  # хранятся в БД; этот блок задаёт стартовые значения (кроме base-url и
+  # connect-таймаута — они неизменны после старта).
+  # Периодический бэкап SQLite (VACUUM INTO, без остановки записи).
+  # Для PostgreSQL задача неактивна — используйте pg_dump.
+  # backup:
+  #   enabled: true
+  #   directory: backups
+  #   retention-count: 7
+  #   # cron-расписание запуска (по умолчанию ежедневно в 03:53):
+  #   # cron: "0 53 3 * * *"
+
+  # Basic Auth для дашборда и /api — раскомментируйте для production.
+  # Включается, когда заданы оба поля; без них дашборд доступен только с localhost.
+  # dashboard:
+  #   auth:
+  #     username: admin
+  #     password: ${DASHBOARD_PASSWORD}
+
+  # Стартовые (сид) клиентские ключи — вносятся в БД при старте, если имени ещё нет.
+  # Основной способ заведения ключей — генерация на странице «Ключи» дашборда.
+  # Ключи провайдеров наружу не выходят.
+  api-keys:
+    - name: my-laptop
+      key: ${PROXY_KEY_LAPTOP}          # например cpk_xxxxxxxxxxxx
+    - name: work-desktop
+      key: ${PROXY_KEY_DESKTOP}
+
+  # Настраиваемый список поддерживаемых моделей.
+  # allow: [] — все public-модели всех провайдеров;
+  # иначе — только перечисленные (порядок = порядок в /v1/models).
+  models:
+    allow: []
+
+  providers:
+    # Провайдер, говорящий нативным протоколом Anthropic: прозрачный pass-through.
+    - name: anthropic-direct
+      type: anthropic
+      base-url: https://api.anthropic.com
+      api-key: ${ANTHROPIC_API_KEY}
+      models:
+        - public: claude-opus-5          # имя, которое видит клиент
+          upstream: claude-opus-5        # имя модели у провайдера
+        - public: claude-sonnet-5
+          upstream: claude-sonnet-5
+
+    # OpenAI-совместимый провайдер: полный перевод протокола Claude ↔ OpenAI
+    # (стриминг, tool calls, thinking → reasoning_effort).
+    - name: openrouter
+      type: openai
+      base-url: https://openrouter.ai/api/v1
+      api-key: ${OPENROUTER_API_KEY}
+      extra-headers:                     # опционально, пробрасываются вверх
+        HTTP-Referer: https://my.setup
+        X-Title: claudeproxy
+      models:
+        - public: gpt-5.2
+          upstream: openai/gpt-5.2
+          reasoning: map                 # map | off — переводить ли thinking
+          max-completion-param: false    # true => шлём max_completion_tokens (o-серия)
+        - public: deepseek-chat
+          upstream: deepseek/deepseek-chat
+          reasoning: map                 # DeepSeek: reasoning_content → thinking
+          max-completion-param: false
+
+# PostgreSQL вместо встроенного SQLite (миграции диалекта применяются
+# автоматически; данные из SQLite не переносятся). Раскомментируйте и
+# укажите реквизиты; с PostgreSQL Hikari держит пул соединений и запись
+# конкурентна. В Docker проще через docker-compose.postgres.yml (см. README).
+#spring:
+#  datasource:
+#    url: jdbc:postgresql://localhost:5432/claudeproxy
+#    username: claudeproxy
+#    password: ${POSTGRES_PASSWORD}
+#    driver-class-name: org.postgresql.Driver
+#    hikari:
+#      maximum-pool-size: 8
