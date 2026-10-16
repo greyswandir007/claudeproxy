@@ -54,6 +54,17 @@ claudeproxy:
     # Ёмкость LRU-кэша сжатий по SHA-256 контента (повторы не дергают модель).
     max-cache-entries: 256
 
+  # Клиент внешних кэш-провайдеров (протокол docs/cache-providers.md):
+  # прокси не знает устройства кэша, здесь только операционные ручки —
+  # таймауты и backoff трекера доступности. Сами провайдеры (имя, URL)
+  # заводятся на дашборде, вкладка «Кэш».
+  cache-providers:
+    availability-backoff-milliseconds: 30000   # база backoff, удваивается до 5 минут
+    timeouts:
+      connect-timeout-milliseconds: 2000
+      consult-timeout-milliseconds: 1000       # lookup на горячем пути запроса
+      operation-timeout-milliseconds: 3000     # store/feedback
+
   # Таймауты исходящих соединений к провайдерам (прямой путь и через прокси).
   # Соединение обрывается ошибкой, если апстрим молчит дольше read-timeout-seconds
   # (для SSE безопасно: события идут часто), клиент получает 5xx вместо вечного висения.

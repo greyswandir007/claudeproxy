@@ -76,6 +76,49 @@ class JdbcStatsService(
             grouped("client_key", bounds.first, bounds.second, null)
         }
 
+    override suspend fun bySession(
+        fromMilliseconds: Long,
+        toMilliseconds: Long,
+    ): List<StatsService.SessionUsage> =
+        databaseProvider.execute {
+            jdbcTemplate.query(
+                """SELECT user_id,
+                       MIN(ts), MAX(ts), COUNT(*),
+                       COALESCE(SUM(input_tokens), 0), COALESCE(SUM(output_tokens), 0),
+                       COALESCE(SUM(cache_creation_tokens), 0), COALESCE(SUM(cache_read_tokens), 0),
+                       COALESCE(SUM(input_tokens + output_tokens + cache_creation_tokens + cache_read_tokens), 0),
+                       COALESCE(SUM(saved_tokens), 0),
+                       COALESCE(SUM(CASE WHEN provider = '${RequestCacheService.CACHE_PROVIDER_NAME}'
+                            THEN saved_tokens ELSE 0 END), 0),
+                       COALESCE(SUM(CASE WHEN provider <> '${RequestCacheService.CACHE_PROVIDER_NAME}'
+                            THEN saved_tokens ELSE 0 END), 0),
+                       COALESCE(SUM(duration_ms), 0)
+                   FROM usage_event
+                   WHERE user_id IS NOT NULL AND ts >= ? AND ts <= ?
+                   GROUP BY user_id
+                   ORDER BY MAX(ts) DESC""",
+                { resultSet, _ ->
+                    StatsService.SessionUsage(
+                        userId = resultSet.getString(1),
+                        firstTsMilliseconds = resultSet.getLong(2),
+                        lastTsMilliseconds = resultSet.getLong(3),
+                        requests = resultSet.getLong(4),
+                        inputTokens = resultSet.getLong(5),
+                        outputTokens = resultSet.getLong(6),
+                        cacheCreationTokens = resultSet.getLong(7),
+                        cacheReadTokens = resultSet.getLong(8),
+                        spentTokens = resultSet.getLong(9),
+                        savedTokens = resultSet.getLong(10),
+                        savedByRequestCache = resultSet.getLong(11),
+                        savedByTrimming = resultSet.getLong(12),
+                        durationMilliseconds = resultSet.getLong(13),
+                    )
+                },
+                fromMilliseconds,
+                toMilliseconds,
+            )
+        }
+
     override suspend fun windowHistory(clientKey: String, limit: Int): List<StatsService.WindowSummary> =
         databaseProvider.execute {
             // окна ключа + перечень провайдеров, обслуживших каждое окно
@@ -249,8 +292,10 @@ class JdbcStatsService(
             jdbcTemplate.query(
                 """SELECT (ts / $bucketMilliseconds) * $bucketMilliseconds,
                           COUNT(*),
-                          COALESCE(SUM(input_tokens), 0), COALESCE(SUM(output_tokens), 0),
-                          COALESCE(SUM(cache_creation_tokens), 0), COALESCE(SUM(cache_read_tokens), 0),
+                          COALESCE(SUM(input_tokens), 0),
+                          COALESCE(SUM(output_tokens), 0),
+                          COALESCE(SUM(cache_creation_tokens), 0),
+                          COALESCE(SUM(cache_read_tokens), 0),
                           COALESCE(SUM(saved_tokens), 0)
                    FROM usage_event
                    WHERE ts >= ? AND ts <= ?$keyCondition

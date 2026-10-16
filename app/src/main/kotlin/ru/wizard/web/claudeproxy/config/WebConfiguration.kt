@@ -3,6 +3,7 @@ package ru.wizard.web.claudeproxy.config
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
 import org.springframework.core.io.ResourceLoader
+import org.springframework.http.CacheControl
 import org.springframework.http.HttpStatus
 import org.springframework.http.MediaType
 import org.springframework.http.codec.ServerCodecConfigurer
@@ -44,9 +45,14 @@ class WebConfiguration(private val resourceLoader: ResourceLoader) : WebFluxConf
             resourceLoader.getResource(location + relativePath).takeIf { it.exists() && it.isReadable }
         }
         return if (resource != null) {
-            ServerResponse.ok()
-                .contentType(contentType)
-                .body(BodyInserters.fromResource(resource))
+            val builder = ServerResponse.ok().contentType(contentType)
+            // index.html без кэша: браузер всегда берёт свежий (бандлы
+            // content-hashed — им кэш не страшен), иначе застревает старая
+            // версия UI после деплоя
+            if (relativePath == "index.html") {
+                builder.cacheControl(CacheControl.noCache())
+            }
+            builder.body(BodyInserters.fromResource(resource))
         } else {
             ServerResponse.status(HttpStatus.NOT_FOUND)
                 .contentType(MediaType.APPLICATION_JSON)

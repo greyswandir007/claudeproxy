@@ -40,6 +40,18 @@ class StatsController(
     ): List<StatsService.GroupedUsage> =
         statsService.byModel(range, clientKey, fromMilliseconds, toMilliseconds)
 
+    /** Использование по сессиям клиентов (metadata.user_id) — токены/
+     *  время/экономия на задачу для трекера; from/to — epoch millis. */
+    @GetMapping("/api/by-session")
+    suspend fun bySession(
+        @RequestParam(name = "from", required = false) fromMilliseconds: Long?,
+        @RequestParam(name = "to", required = false) toMilliseconds: Long?,
+    ): List<StatsService.SessionUsage> {
+        val to = toMilliseconds ?: System.currentTimeMillis()
+        val from = fromMilliseconds ?: (to - 30L * 24 * 3_600_000)
+        return statsService.bySession(from, to)
+    }
+
     /** Группировка использования по провайдерам. */
     @GetMapping("/api/by-provider")
     suspend fun byProvider(

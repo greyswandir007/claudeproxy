@@ -66,6 +66,11 @@ export default function ProviderForm({
   const [type, setType] = useState(provider?.type ?? 'openai')
   const [baseUrl, setBaseUrl] = useState(provider?.baseUrl ?? '')
   const [proxyName, setProxyName] = useState(provider?.proxyName ?? '')
+  // кэш-провайдер: значение живёт в settingOverrides[CACHE_PROVIDER],
+  // но показывается отдельным полем (видимое, не в «расширенных»)
+  const [cacheProvider, setCacheProvider] = useState(
+    provider?.settingOverrides?.CACHE_PROVIDER ?? 'local',
+  )
   const [availableProxies, setAvailableProxies] = useState<string[]>([])
   const [apiKey, setApiKey] = useState('')
   const [extraHeaderRows, setExtraHeaderRows] = useState(
@@ -106,6 +111,11 @@ export default function ProviderForm({
   )
   const [selectedSettingKey, setSelectedSettingKey] = useState('')
   const [showExtended, setShowExtended] = useState(isEditMode)
+  // кэш-провайдеры — для выпадающего списка CACHE_PROVIDER
+  const [cacheProviderNames, setCacheProviderNames] = useState<string[]>([])
+  useEffect(() => {
+    api.listCacheProviders().then((list) => setCacheProviderNames(list.map((p) => p.name))).catch(() => {})
+  }, [])
 
   const [authType, setAuthType] = useState<'api_key' | 'oauth'>(
     provider?.authType === 'oauth' ? 'oauth' : 'api_key',
@@ -182,6 +192,16 @@ export default function ProviderForm({
   }, [])
 
   const save = () => {
+    // защита от случайного стирания: обнуление заполненных лимитов/тарифа
+    const wipingLimits =
+      provider != null &&
+      ((provider.limitWindowTokens != null && millionsToTokens(limitWindowTokens) == null) ||
+        (provider.limitWeekTokens != null && millionsToTokens(limitWeekTokens) == null) ||
+        (provider.limitMonthTokens != null && millionsToTokens(limitMonthTokens) == null) ||
+        (provider.pricingMode != null && provider.pricingMode !== '' && pricingMode === 'none'))
+    if (wipingLimits && !window.confirm('Лимиты/тариф станут пустыми — продолжить?')) {
+      return
+    }
     setSaving(true)
     setError(null)
     const extraHeaders = Object.fromEntries(
@@ -205,7 +225,7 @@ export default function ProviderForm({
             ),
           )
         : {},
-      settingOverrides,
+      settingOverrides: { ...settingOverrides, ...(cacheProvider !== 'local' || settingOverrides.CACHE_PROVIDER ? { CACHE_PROVIDER: cacheProvider } : {}) },
       authType,
       oauthGrant,
       oauthClientId: oauthClientId.trim(),
@@ -227,6 +247,7 @@ export default function ProviderForm({
             }
           : { pricingMode: '', pricePerMillionTokens: null, priceMonthly: null }),
       proxyName: proxyName.length > 0 ? proxyName : '',
+      ...(wipingLimits ? { limitsWipeConfirmed: true } : {}),
     }
     const result = isEditMode
       ? api.updateProvider(provider.id, request)
@@ -313,6 +334,18 @@ export default function ProviderForm({
             ))}
           </select>
           <FieldHint text="Все исходящие вызовы провайдера (чат, файлы, OAuth, оптимизатор) пойдут через выбранный прокси." />
+        </label>
+        <label className="form-wide">
+          Кэш-провайдер
+          <select value={cacheProvider} onChange={(event) => setCacheProvider(event.target.value)}>
+            <option value="local">local — встроенный кэш повторов</option>
+            {cacheProviderNames.map((name) => (
+              <option key={name} value={name}>
+                {name}
+              </option>
+            ))}
+          </select>
+          <FieldHint text="Запросы консультируются у выбранного кэш-сервиса (вкладка «Кэш»), ответы апстрима пишутся ему; local — встроенный кэш повторов." />
         </label>
         <label className="form-wide">
           Авторизация
@@ -543,7 +576,11 @@ export default function ProviderForm({
           </div>
           <div className="overrides-block">
             <div className="key-value-title">Оверрайды входных параметров</div>
-            {Object.entries(settingOverrides).map(([key, value]) => {
+            {Object.entries(settingOverrides)
+              // CACHE_PROVIDER управляется видимым полем «Кэш-провайдер» —
+              // в расширенных не дублируем
+              .filter(([key]) => key !== 'CACHE_PROVIDER')
+              .map(([key, value]) => {
               const definition = SETTING_CATALOG.find((d) => d.key === key)
               return (
                 <div key={key}>

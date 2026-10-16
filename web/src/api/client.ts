@@ -244,6 +244,31 @@ export interface ProviderCost {
   spentTokens30Days: number
 }
 
+/** Внешний кэш-провайдер (вкладка «Кэш», docs/cache-providers.md). */
+export interface CacheProviderView {
+  id: number
+  name: string
+  url: string
+  enabled: boolean
+}
+
+/** Ответ GET /api/cache-providers/{id}/status (спека кэш-провайдера). */
+export interface CacheProviderStatus {
+  uptime_s?: number
+  counters?: {
+    lookups?: number
+    hits_exact?: number
+    hits_probable?: number
+    stores?: number
+    feedback_positive?: number
+    feedback_negative?: number
+    tokens_saved_input?: number
+    tokens_saved_output?: number
+  }
+  extra?: Record<string, unknown>
+  error?: string
+}
+
 /** Каталог оверрайдов — зеркалит ProviderSettingCatalog бэкенда. */
 export interface SettingDefinition {
   key: string
@@ -275,6 +300,25 @@ export const SETTING_CATALOG: SettingDefinition[] = [
 ]
 
 export const EFFORT_LEVELS = ['low', 'medium', 'high', 'xhigh', 'max'] as const
+
+
+
+/** Одна строка GET /api/by-session: использование сессии клиента. */
+export interface UsageSessionView {
+  userId: string
+  firstTsMilliseconds: number
+  lastTsMilliseconds: number
+  requests: number
+  inputTokens: number
+  outputTokens: number
+  cacheCreationTokens: number
+  cacheReadTokens: number
+  spentTokens: number
+  savedTokens: number
+  savedByRequestCache: number
+  savedByTrimming: number
+  durationMilliseconds: number
+}
 
 export interface ModelTokens {
   modelName: string
@@ -560,6 +604,12 @@ export const api = {
     providerName: string | null
     model: string | null
   }) => putJson<OptimizerConfigView>('/api/optimizer/config', request),
+  usageSessions: (from?: number, to?: number) => {
+    const params = new URLSearchParams()
+    if (from !== undefined) params.set('from', String(from))
+    if (to !== undefined) params.set('to', String(to))
+    return getJson<UsageSessionView[]>(`/api/by-session?${params.toString()}`)
+  },
   groupedTimeline: (
     bucket: 'hour' | 'day',
     key: string | null,
@@ -589,6 +639,14 @@ export const api = {
     ),
   config: () => getJson<ProxyConfig>('/api/config'),
   keys: () => getJson<ClientKey[]>('/api/keys'),
+  listCacheProviders: () => getJson<CacheProviderView[]>('/api/cache-providers'),
+  createCacheProvider: (request: { name: string; url: string; enabled?: boolean }) =>
+    postJson<CacheProviderView>('/api/cache-providers', request),
+  updateCacheProvider: (id: number, request: { name: string; url: string; enabled?: boolean }) =>
+    putJson<CacheProviderView>(`/api/cache-providers/${id}`, request),
+  deleteCacheProvider: (id: number) => deleteRequest(`/api/cache-providers/${id}`),
+  cacheProviderStatus: (id: number | 'local') =>
+    getJson<CacheProviderStatus>(`/api/cache-providers/${id}/status`),
   listProxies: () => getJson<ProxyEndpoint[]>('/api/proxies'),
   createProxy: (request: ProxyRequest) => postJson<ProxyEndpoint>('/api/proxies', request),
   updateProxy: (id: number, request: ProxyRequest) =>

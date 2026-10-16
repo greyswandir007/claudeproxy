@@ -44,7 +44,9 @@ export default function PeriodCard({ summary }: { summary: RangeSummary }) {
             {' '}
             · сэкономлено{' '}
             <strong>
-              {formatTokens(summary.totals.savedByTrimming + summary.totals.savedByRequestCache)}
+              {formatTokens(
+                summary.totals.savedByTrimming + summary.totals.savedByRequestCache,
+              )}
             </strong>
           </>
         )}

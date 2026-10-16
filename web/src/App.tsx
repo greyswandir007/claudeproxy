@@ -5,9 +5,10 @@ import ExposurePage from './pages/ExposurePage'
 import KeysPage from './pages/KeysPage'
 import ModelsPage from './pages/ModelsPage'
 import ProxiesPage from './pages/ProxiesPage'
+import CachePage from './pages/CachePage'
 import ServerEventsPage from './pages/ServerEventsPage'
 
-type Page = 'dashboard' | 'keys' | 'models' | 'proxies' | 'exposure' | 'chat' | 'events'
+type Page = 'dashboard' | 'keys' | 'models' | 'proxies' | 'cache' | 'exposure' | 'chat' | 'events'
 
 const REFRESH_INTERVAL_MILLISECONDS = 30_000
 
@@ -59,6 +60,12 @@ export default function App() {
             Прокси
           </button>
           <button
+            className={page === 'cache' ? 'tab tab-active' : 'tab'}
+            onClick={() => setPage('cache')}
+          >
+            Кэш
+          </button>
+          <button
             className={page === 'exposure' ? 'tab tab-active' : 'tab'}
             onClick={() => setPage('exposure')}
           >
@@ -91,6 +98,7 @@ export default function App() {
         {page === 'keys' && <KeysPage refreshTick={refreshTick} />}
         {page === 'models' && <ModelsPage refreshTick={refreshTick} />}
         {page === 'proxies' && <ProxiesPage refreshTick={refreshTick} onRefresh={refreshNow} />}
+        {page === 'cache' && <CachePage refreshTick={refreshTick} onRefresh={refreshNow} />}
         {page === 'exposure' && <ExposurePage refreshTick={refreshTick} />}
         {page === 'chat' && <ChatPage refreshTick={refreshTick} />}
         {page === 'events' && <ServerEventsPage refreshTick={refreshTick} />}

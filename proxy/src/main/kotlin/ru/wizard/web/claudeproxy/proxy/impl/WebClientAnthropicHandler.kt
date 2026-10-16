@@ -28,6 +28,9 @@ import ru.wizard.web.claudeproxy.proxy.AnthropicHandler
 import ru.wizard.web.claudeproxy.proxy.ProviderRequestAdjuster
 import ru.wizard.web.claudeproxy.proxy.ProxyErrorDetails
 import ru.wizard.web.claudeproxy.proxy.TokenSavingAdjuster
+import ru.wizard.web.claudeproxy.cacheprovider.CacheConsultService
+import ru.wizard.web.claudeproxy.cacheprovider.CacheProviderService
+import ru.wizard.web.claudeproxy.providers.ProviderSettingCatalog
 import ru.wizard.web.claudeproxy.proxy.cache.CachedResponsePresenter
 import ru.wizard.web.claudeproxy.proxy.cache.RequestCacheService
 import ru.wizard.web.claudeproxy.providers.ProviderOAuthTokenService
@@ -57,8 +60,14 @@ class WebClientAnthropicHandler(
     private val routeCircuitBreaker: RouteCircuitBreaker,
     private val requestCacheService: RequestCacheService,
     private val conversationAffinityService: ConversationAffinityService,
+    private val cacheConsultService: CacheConsultService,
 ) : AnthropicHandler {
     private val logger = KotlinLogging.logger {}
+
+    /** Имя внешнего кэш-провайдера маршрута (CACHE_PROVIDER), null — local. */
+    private fun externalCacheProviderNameOf(route: ModelRegistry.Route): String? =
+        route.provider.settingOverrides[ProviderSettingCatalog.CACHE_PROVIDER]
+            ?.takeIf { it.isNotBlank() && it != CacheProviderService.LOCAL_NAME }
 
     override suspend fun passThrough(
         exchange: ServerWebExchange,
@@ -70,6 +79,16 @@ class WebClientAnthropicHandler(
     ): ResponseEntity<Flux<DataBuffer>> {
         val stream = requestRoot.path("stream").asBoolean(false)
         val clientKey = exchange.getAttribute(ApiKeyAuthFilter.CLIENT_KEY_ATTRIBUTE) ?: "unknown"
+        // кэш-провайдер моделей: настройка CACHE_PROVIDER у первого кандидата
+        // маршрута (local — встроенный кэш повторов, внешние — из вкладки «Кэш»)
+        val externalCacheProviderName = routes.firstOrNull()
+            ?.provider?.settingOverrides?.get(ProviderSettingCatalog.CACHE_PROVIDER)
+            ?.takeIf { it.isNotBlank() && it != CacheProviderService.LOCAL_NAME }
+        // внешний кэш: неявная оценка ожидающего ответа по сигналам
+        // этого запроса (до кэша: повтор — тоже сигнал для предыдущего ответа)
+        if (recordUsage && externalCacheProviderName != null) {
+            cacheConsultService.beforeRequest(upstreamPath, requestRoot, conversationKey)
+        }
         // кэш повторяющихся запросов: точный повтор отдаётся без похода к провайдеру
         val cacheKey =
             if (recordUsage) requestCacheService.buildCacheKey(upstreamPath, requestRoot) else null
@@ -84,6 +103,27 @@ class WebClientAnthropicHandler(
                 if (parallelResult == null) break
                 usageRecorder.recordAsync(CachedResponsePresenter.usageEvent(exchange, requestRoot, parallelResult))
                 return CachedResponsePresenter.buildResponse(exchange, parallelResult, stream)
+            }
+        }
+        // внешний кэш-провайдер: консультация после кэша повторов
+        // (точные повторы остаются бесплатными)
+        if (recordUsage && externalCacheProviderName != null) {
+            cacheConsultService.consult(
+                externalCacheProviderName, upstreamPath, requestRoot, conversationKey,
+            )?.let { hit ->
+                if (cacheKey != null) {
+                    requestCacheService.endFlight(cacheKey)
+                }
+                val cached = RequestCacheService.CachedResponse(
+                    responseBody = hit.responseBody,
+                    responseFormat = RequestCacheService.ResponseFormat.valueOf(hit.responseFormat),
+                    model = requestRoot.path("model").asText(""),
+                    provider = externalCacheProviderName,
+                    inputTokens = hit.inputTokens,
+                    outputTokens = hit.outputTokens,
+                )
+                usageRecorder.recordAsync(CachedResponsePresenter.usageEvent(exchange, requestRoot, cached))
+                return CachedResponsePresenter.buildResponse(exchange, cached, stream)
             }
         }
         // маршруты в кулдауне пропускаем; если кулдаун у всех — пробуем все
@@ -242,6 +282,7 @@ class WebClientAnthropicHandler(
                     usageRecorder.recordAsync(
                         usageEvent(
                             clientKey = clientKey,
+                            userId = ru.wizard.web.claudeproxy.usage.UsageUserId.of(requestRoot),
                             route = route,
                             stream = false,
                             usageAccumulator = usageAccumulator,
@@ -277,6 +318,15 @@ class WebClientAnthropicHandler(
                                     timeToLiveMilliseconds = RequestCacheService.timeToLiveMilliseconds(route.provider),
                                 ),
                             )
+                            // внешний кэш-провайдер: store по спеке (fire-and-forget)
+                            externalCacheProviderNameOf(route)?.let { cacheProviderName ->
+                                cacheConsultService.storeAsync(
+                                    cacheProviderName, upstreamPath, requestRoot,
+                                    responseEntity.body ?: "", RequestCacheService.ResponseFormat.JSON,
+                                    usageAccumulator.inputTokens, usageAccumulator.outputTokens,
+                                    conversationKey,
+                                )
+                            }
                         }
                     }
                 if (responseEntity.statusCode.is2xxSuccessful()) {
@@ -296,6 +346,7 @@ class WebClientAnthropicHandler(
                     usageRecorder.recordAsync(
                         usageEvent(
                             clientKey = clientKey,
+                            userId = ru.wizard.web.claudeproxy.usage.UsageUserId.of(requestRoot),
                             route = route,
                             stream = false,
                             usageAccumulator = UsageAccumulator(),
@@ -372,6 +423,7 @@ class WebClientAnthropicHandler(
                     usageRecorder.recordAsync(
                         usageEvent(
                             clientKey = clientKey,
+                            userId = ru.wizard.web.claudeproxy.usage.UsageUserId.of(requestRoot),
                             route = route,
                             stream = true,
                             usageAccumulator = usageSniffer.usageAccumulator,
@@ -402,6 +454,7 @@ class WebClientAnthropicHandler(
                     usageRecorder.recordAsync(
                         usageEvent(
                             clientKey = clientKey,
+                            userId = ru.wizard.web.claudeproxy.usage.UsageUserId.of(requestRoot),
                             route = route,
                             stream = true,
                             usageAccumulator = usageSniffer.usageAccumulator,
@@ -428,6 +481,16 @@ class WebClientAnthropicHandler(
                             timeToLiveMilliseconds = RequestCacheService.timeToLiveMilliseconds(route.provider),
                         ),
                     )
+                    // внешний кэш-провайдер: store по спеке (fire-and-forget)
+                    externalCacheProviderNameOf(route)?.let { cacheProviderName ->
+                        cacheConsultService.storeAsync(
+                            cacheProviderName, upstreamPath, requestRoot,
+                            transcript.toString(), RequestCacheService.ResponseFormat.SSE,
+                            usageSniffer.usageAccumulator.inputTokens,
+                            usageSniffer.usageAccumulator.outputTokens,
+                            conversationKey,
+                        )
+                    }
                 }
             }
             .onErrorResume { error ->
@@ -549,6 +612,7 @@ class WebClientAnthropicHandler(
 
     private fun usageEvent(
         clientKey: String,
+        userId: String?,
         route: ModelRegistry.Route,
         stream: Boolean,
         usageAccumulator: UsageAccumulator,
@@ -563,6 +627,7 @@ class WebClientAnthropicHandler(
     ) = UsageEvent(
         ts = System.currentTimeMillis(),
         clientKey = clientKey,
+        userId = userId,
         provider = route.provider.name,
         model = route.mapping.publicName,
         upstreamModel = route.mapping.upstreamName,

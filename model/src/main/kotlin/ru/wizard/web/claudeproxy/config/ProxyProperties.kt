@@ -23,6 +23,7 @@ class ProxyProperties(
     var serverEvent: ServerEvent = ServerEvent(),
     var backup: Backup = Backup(),
     var upstream: Upstream = Upstream(),
+    var cacheProviders: CacheProviders = CacheProviders(),
 ) {
     class Models(
         /** Белый список public-моделей; пусто = все модели всех провайдеров. */
@@ -135,4 +136,26 @@ class ProxyProperties(
          *  зависания при стопоре апстрима; для SSE безопасно — события идут часто. */
         var readTimeoutSeconds: Long = 300,
     )
+
+    /**
+     * Клиент внешних кэш-провайдеров (протокол docs/cache-providers.md):
+     * прокси не знает устройства кэша, здесь только операционные ручки
+     * обращений — таймауты и backoff трекера доступности.
+     */
+    class CacheProviders(
+        var timeouts: Timeouts = Timeouts(),
+        /** База backoff трекера доступности провайдера, мс: после первого
+         *  отказа провайдер считается недоступным столько, удваиваясь
+         *  с каждым сбоем до потолка 5 минут. */
+        var availabilityBackoffMilliseconds: Long = 30_000,
+    ) {
+        /** Таймауты обращений к кэш-провайдеру. */
+        class Timeouts(
+            var connectTimeoutMilliseconds: Int = 2_000,
+            /** Таймаут консультации (lookup) на горячем пути запроса. */
+            var consultTimeoutMilliseconds: Long = 1_000,
+            /** Таймаут операции store/feedback. */
+            var operationTimeoutMilliseconds: Long = 3_000,
+        )
+    }
 }

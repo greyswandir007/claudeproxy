@@ -150,6 +150,7 @@ class JdbcProviderModelService(
             validateEffortMapping(request.effortMapping)
             validateSettingOverrides(request.settingOverrides)
             requireProxyNameExists(request.proxyName)
+            requireLimitsWipeConfirmed(id, request)
             jdbcTemplate.update(
                 """UPDATE provider SET name = ?, type = ?, base_url = ?, extra_headers = ?,
                    limit_window_tokens = ?, limit_week_tokens = ?, limit_month_tokens = ?,
@@ -337,6 +338,34 @@ class JdbcProviderModelService(
         ).firstOrNull()
         if (found == null) {
             throw badRequest("Прокси '$name' не найден")
+        }
+    }
+
+    /**
+     * Барьер стирания: запрос без лимитов и тарифа при заполненных в БД —
+     * только с явным подтверждением (устаревшие бандлы форм шлюли null
+     * молча; инциденты 14.10).
+     */
+    private fun requireLimitsWipeConfirmed(id: Long, request: ProviderModelService.ProviderRequest) {
+        val wipesLimits = request.limitWindowTokens == null &&
+            request.limitWeekTokens == null &&
+            request.limitMonthTokens == null &&
+            (request.pricingMode ?: "").isBlank()
+        if (!wipesLimits || request.limitsWipeConfirmed) return
+        val existing = jdbcTemplate.queryForMap(
+            """SELECT limit_window_tokens, limit_week_tokens, limit_month_tokens, pricing_mode
+               FROM provider WHERE id = ?""",
+            id,
+        )
+        val hasValues = existing["limit_window_tokens"] != null ||
+            existing["limit_week_tokens"] != null ||
+            existing["limit_month_tokens"] != null ||
+            !(existing["pricing_mode"] as? String ?: "").isNullOrBlank()
+        if (hasValues) {
+            throw badRequest(
+                "Стирание лимитов/тарифа провайдера требует явного подтверждения: " +
+                    "передайте limitsWipeConfirmed=true",
+            )
         }
     }
 

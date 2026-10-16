@@ -100,6 +100,7 @@ export default function TimelineChart({
   fromMilliseconds,
   toMilliseconds,
   keySelected,
+  title = 'Расход по времени',
 }: {
   data: Record<string, number | string>[]
   labels: { key: string; label: string; color: string }[]
@@ -110,6 +111,8 @@ export default function TimelineChart({
   fromMilliseconds: number
   toMilliseconds: number
   keySelected: boolean
+  /** Заголовок карточки. */
+  title?: string
 }) {
   const [hoveredSeries, setHoveredSeries] = useState<string | null>(null)
   const [isolatedSeries, setIsolatedSeries] = useState<string | null>(null)
@@ -143,12 +146,11 @@ export default function TimelineChart({
   if (data.length === 0) {
     return (
       <section className="card chart-card">
-        <h2>Расход по времени</h2>
+        <h2>{title}</h2>
         <p className="muted">Нет данных за выбранный период.</p>
       </section>
     )
   }
-
   // окна: полоса от старта до конца (конец текущего окна обрезаем краем графика);
   // подписи времени на границах — только когда корзин немного (период «сутки»)
   const chartEnd = Number(data[data.length - 1].sortKey) + bucketMilliseconds / 2
@@ -156,7 +158,7 @@ export default function TimelineChart({
   return (
     <section className="card chart-card">
       <h2>
-        Расход по времени
+        {title}
         {bucket === 'hour' && boundaries.length > 0 && (
           <span className="card-note">
             серые полосы — 5-часовые окна ключа, пунктир — старт, точки — конец

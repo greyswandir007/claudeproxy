@@ -1124,8 +1124,9 @@ class ProxyIntegrationTest {
     fun `миграции применены и зафиксированы`() {
         val appliedMigrations =
             jdbcTemplate.queryForList("SELECT version FROM schema_migration ORDER BY version", Int::class.java)
-        assertTrue(appliedMigrations.containsAll(listOf(1, 2, 3)))
-        // V2: колонки приоритета и выдачи на месте
+        // Схема схлопнута в одну миграцию: фиксируется только версия 1.
+        assertEquals(listOf(1), appliedMigrations)
+        // Колонки приоритета и выдачи на месте
         jdbcTemplate.queryForObject("SELECT priority, exposed FROM model LIMIT 1") { resultSet, _ ->
             // достаточно, что запрос не падает
             resultSet.getInt(1) + resultSet.getInt(2)
@@ -1489,12 +1490,13 @@ class ProxyIntegrationTest {
                 .none { it.path("providerName").asText() == "fake" },
         )
 
-        // сброс лимитов через обновление (null)
+        // сброс лимитов через обновление (null) — с явным подтверждением
+        // (барьер 14.10: без флага стирание заполненных лимитов → 400)
         webTestClient.put().uri("/api/providers/$providerId")
             .contentType(MediaType.APPLICATION_JSON)
             .bodyValue(
                 """{"name":"limits-provider","type":"openai",
-                    "baseUrl":"http://127.0.0.1:${upstreamPort()}"}""",
+                    "baseUrl":"http://127.0.0.1:${upstreamPort()}","limitsWipeConfirmed":true}""",
             )
             .exchange().expectStatus().isOk
         val limitsAfterReset = webTestClient.get().uri("/api/provider-limits")
